@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+"""Terminal UI for selecting and deleting assistant sessions."""
+
 from datetime import timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import questionary
 import typer
@@ -22,6 +24,9 @@ from .models import SessionRecord
 
 app = typer.Typer(add_completion=False, help="Session deleter for coding assistants")
 console = Console()
+
+ValidateSelectionFn = Callable[[List[str]], Union[bool, str]]
+FormattedChoiceTitle = List[Tuple[str, str]]
 
 _PROVIDER_LABELS = {
     "claude": "Claude Code",
@@ -55,6 +60,13 @@ def main(
         help="Skip confirmation prompt before deletion",
     ),
 ) -> None:
+    """Application entrypoint.
+
+    Args:
+        assistant: Optional fixed assistant provider from CLI flags.
+        yes: Whether to skip the deletion confirmation prompt.
+    """
+
     if assistant:
         provider = _pick_provider(assistant)
         if provider is None:
@@ -73,6 +85,8 @@ def main(
 
 
 def _pick_provider(cli_provider: Optional[str]) -> Optional[str]:
+    """Resolves provider from CLI option or interactive menu selection."""
+
     if cli_provider:
         normalized = cli_provider.strip().lower()
         if normalized in _PROVIDER_LABELS:
@@ -86,6 +100,8 @@ def _pick_provider(cli_provider: Optional[str]) -> Optional[str]:
 
 
 def _print_home_screen() -> None:
+    """Renders the branded home screen banner and project info."""
+
     console.print(f"[bold cyan]{_APP_BANNER}[/bold cyan]")
     console.print("[bold]Session Deleter Engine[/bold]")
     console.print("[blue]https://github.com/ilypopv/sede/[/blue]")
@@ -96,6 +112,16 @@ def _print_home_screen() -> None:
 
 
 def _run_provider_flow(provider: str, yes: bool) -> bool:
+    """Runs one provider-specific selection and deletion flow.
+
+    Args:
+        provider: Provider key selected by user.
+        yes: Whether confirmation is skipped.
+
+    Returns:
+        True when caller should navigate back to provider menu, else False.
+    """
+
     sessions = discover_sessions(provider)
     if not sessions:
         console.print(
@@ -147,6 +173,8 @@ def _run_provider_flow(provider: str, yes: bool) -> bool:
 
 
 def _pick_sessions(sessions: List[SessionRecord]) -> Union[List[SessionRecord], str]:
+    """Prompts user to choose one or more sessions for deletion."""
+
     mapping: Dict[str, SessionRecord] = {
         session.session_id: session for session in sessions
     }
@@ -184,6 +212,8 @@ def _pick_sessions(sessions: List[SessionRecord]) -> Union[List[SessionRecord], 
 
 
 def _print_selected_summary(sessions: List[SessionRecord]) -> None:
+    """Prints a compact summary of selected sessions before deletion."""
+
     console.print("[bold]Selected for deletion:[/bold]")
     for session in sessions:
         console.print(
@@ -194,7 +224,9 @@ def _print_selected_summary(sessions: List[SessionRecord]) -> None:
         )
 
 
-def _session_choice_title(session: SessionRecord) -> str:
+def _session_choice_title(session: SessionRecord) -> FormattedChoiceTitle:
+    """Builds a formatted multi-line title row for a session choice item."""
+
     storage_hint = _session_storage_hint(session)
     return [
         ("", f"{session.title}\n"),
@@ -209,6 +241,8 @@ def _session_choice_title(session: SessionRecord) -> str:
 
 
 def _session_storage_hint(session: SessionRecord) -> str:
+    """Returns a display-friendly storage path for a session."""
+
     path_for_display = session.storage_path
     if session.provider == "claude":
         path_for_display = session.storage_path.parent
@@ -223,8 +257,10 @@ def _session_storage_hint(session: SessionRecord) -> str:
 def _checkbox_with_back(
     message: str,
     choices: Sequence[Union[Choice, Separator]],
-    validate,
+    validate: ValidateSelectionFn,
 ) -> Union[List[str], str, None]:  # pragma: no cover
+    """Runs custom checkbox prompt with explicit back and quit controls."""
+
     if not callable(validate):
         raise ValueError("validate must be callable")
 
@@ -302,20 +338,20 @@ def _checkbox_with_back(
             control.select_previous()
 
     @bindings.add(Keys.Down, eager=True)
-    def _down(event):
+    def _down(event: Any) -> None:
         _move_cursor_down(event)
 
     @bindings.add(Keys.Up, eager=True)
-    def _up(event):
+    def _up(event: Any) -> None:
         _move_cursor_up(event)
 
     @bindings.add(Keys.Left, eager=True)
-    def _go_back(event):
+    def _go_back(event: Any) -> None:
         control.is_answered = True
         event.app.exit(result=_BACK_SENTINEL)
 
     @bindings.add(Keys.ControlM, eager=True)
-    def _submit(event):
+    def _submit(event: Any) -> None:
         selected_values = get_selected_values()
         control.submission_attempted = True
         if perform_validation(selected_values):
@@ -323,7 +359,7 @@ def _checkbox_with_back(
             event.app.exit(result=selected_values)
 
     @bindings.add(Keys.Any)
-    def _other(_event):
+    def _other(_event: Any) -> None:
         return None
 
     question = Application(
@@ -339,6 +375,8 @@ def _checkbox_with_back(
 
 
 def _provider_menu_with_quit() -> Optional[str]:  # pragma: no cover
+    """Shows provider selection menu with keyboard shortcuts for quit/select."""
+
     choices: List[Choice] = [
         Choice(
             "1. Claude Code\n   Delete archived Claude Code sessions\n",
@@ -384,27 +422,27 @@ def _provider_menu_with_quit() -> Optional[str]:  # pragma: no cover
             control.select_previous()
 
     @bindings.add(Keys.Down, eager=True)
-    def _down(event):
+    def _down(event: Any) -> None:
         _move_cursor_down(event)
 
     @bindings.add(Keys.Up, eager=True)
-    def _up(event):
+    def _up(event: Any) -> None:
         _move_cursor_up(event)
 
     @bindings.add(Keys.ControlM, eager=True)
-    def _submit(event):
+    def _submit(event: Any) -> None:
         pointed = control.get_pointed_at()
         control.is_answered = True
         event.app.exit(result=pointed.value if isinstance(pointed.value, str) else None)
 
     @bindings.add(Keys.Right, eager=True)
-    def _submit_right(event):
+    def _submit_right(event: Any) -> None:
         pointed = control.get_pointed_at()
         control.is_answered = True
         event.app.exit(result=pointed.value if isinstance(pointed.value, str) else None)
 
     @bindings.add(Keys.Any)
-    def _other(_event):
+    def _other(_event: Any) -> None:
         return None
 
     question = Application(
@@ -417,6 +455,8 @@ def _provider_menu_with_quit() -> Optional[str]:  # pragma: no cover
 
 
 def _human_size(size_bytes: int) -> str:
+    """Formats byte count into human-readable units."""
+
     value = float(size_bytes)
     units = ["B", "KB", "MB", "GB", "TB"]
     unit_index = 0
