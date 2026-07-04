@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from prompt_toolkit.layout import ConditionalContainer, HSplit, Window
 from questionary import Choice
-from questionary.prompts.common import Separator
+from questionary.prompts.common import InquirerControl, Separator
 from typer.testing import CliRunner
 
 from sede import cli
@@ -254,6 +255,34 @@ def test_compute_toggled_select_all_handles_no_selectable_choices() -> None:
     result = cli._compute_toggled_select_all(choices, [])
 
     assert result == []
+
+
+def test_create_inquirer_layout_with_footer_adds_external_footer() -> None:
+    control = InquirerControl([Choice(title="a", value="a")])
+    layout = cli._create_inquirer_layout_with_footer(
+        control,
+        lambda: [("class:question", " prompt ")],
+        "Footer row",
+    )
+
+    assert isinstance(layout.container, HSplit)
+
+    footer_container = layout.container.children[-1]
+    assert isinstance(footer_container, ConditionalContainer)
+    assert isinstance(footer_container.content, Window)
+
+    footer_text = footer_container.content.content.text
+    tokens = footer_text() if callable(footer_text) else footer_text
+    assert ("class:text", "Footer row") in tokens
+
+    choices_container = next(
+        child
+        for child in layout.container.children
+        if isinstance(child, ConditionalContainer)
+        and isinstance(child.content, Window)
+        and child.content.content is control
+    )
+    assert choices_container.content.dont_extend_height()
 
 
 def test_run_provider_flow_collects_failures(monkeypatch) -> None:
