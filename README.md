@@ -78,7 +78,7 @@ Main screen:
   ____) | |____| |__| | |____
  |_____/|______|_____/|______|
 
-Session Deleter Engine
+Session Deleter v0.1.1
 https://github.com/ilypopv/sede/
 Deep clean archived coding assistant sessions from your device.
 
@@ -95,6 +95,9 @@ Deep clean archived coding assistant sessions from your device.
 Session selection screen:
 
 ```text
+ Available sessions: Claude Code
+ 1 session(s) loaded. Total size: 1.5 MB.
+
  Choose sessions to delete
  » ○ Session title...
    /Users/you/project-path
@@ -102,6 +105,17 @@ Session selection screen:
    1.5 MB | 2026-07-03 09:44 UTC
 
    ↑↓ Navigate  |  ← Back  |  Space Select  |  A All  |  Enter Delete  |  Ctrl+C / Q Quit
+```
+
+When no sessions are found for a provider, the same screen layout is shown instead:
+
+```text
+ Available sessions: Claude Code
+ 0 session(s) loaded. Total size: 0 B.
+
+ No sessions found for Claude Code.
+
+ Press any key to go back...
 ```
 
 ## Safety Notes
