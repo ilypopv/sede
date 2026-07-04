@@ -80,6 +80,93 @@ def test_delete_session_removes_claude_file(tmp_path: Path) -> None:
     assert not session_file.exists()
 
 
+def test_delete_session_prunes_empty_claude_parent_dir(tmp_path: Path) -> None:
+    session_dir = tmp_path / "-Users-me-project"
+    session_dir.mkdir()
+    session_file = session_dir / "s.jsonl"
+    session_file.write_text("{}\n", encoding="utf-8")
+
+    record = SessionRecord(
+        provider="claude",
+        session_id="s",
+        title="t",
+        project_path="/tmp",
+        size_bytes=1,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=session_file,
+    )
+
+    discovery.delete_session(record)
+
+    assert not session_file.exists()
+    assert not session_dir.exists()
+
+
+def test_delete_session_keeps_non_empty_claude_parent_dir(tmp_path: Path) -> None:
+    session_dir = tmp_path / "-Users-me-project"
+    session_dir.mkdir()
+    session_file = session_dir / "s.jsonl"
+    session_file.write_text("{}\n", encoding="utf-8")
+    (session_dir / "keep.jsonl").write_text("{}\n", encoding="utf-8")
+
+    record = SessionRecord(
+        provider="claude",
+        session_id="s",
+        title="t",
+        project_path="/tmp",
+        size_bytes=1,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=session_file,
+    )
+
+    discovery.delete_session(record)
+
+    assert not session_file.exists()
+    assert session_dir.exists()
+
+
+def test_delete_session_prune_ignores_rmdir_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    session_dir = tmp_path / "-Users-me-project"
+    session_dir.mkdir()
+    session_file = session_dir / "s.jsonl"
+    session_file.write_text("{}\n", encoding="utf-8")
+
+    original_rmdir = Path.rmdir
+
+    def _boom(self: Path) -> None:
+        if self == session_dir:
+            raise OSError("simulated")
+        original_rmdir(self)
+
+    monkeypatch.setattr(Path, "rmdir", _boom)
+
+    record = SessionRecord(
+        provider="claude",
+        session_id="s",
+        title="t",
+        project_path="/tmp",
+        size_bytes=1,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=session_file,
+    )
+
+    discovery.delete_session(record)
+
+    assert not session_file.exists()
+    assert session_dir.exists()
+
+
+def test_delete_claude_session_file_without_parent_directory(tmp_path: Path) -> None:
+    file_without_parent = tmp_path / "orphan.jsonl"
+    file_without_parent.write_text("{}\n", encoding="utf-8")
+
+    discovery._delete_claude_session_file(file_without_parent)
+
+    assert not file_without_parent.exists()
+
+
 def test_delete_session_removes_copilot_directory(tmp_path: Path) -> None:
     session_dir = tmp_path / "copilot-session"
     session_dir.mkdir()
