@@ -78,7 +78,7 @@ Main screen:
   ____) | |____| |__| | |____
  |_____/|______|_____/|______|
 
-Session Deleter v0.1.1
+Session Deleter v0.1.2
 https://github.com/ilypopv/sede/
 Deep clean archived coding assistant sessions from your device.
 
