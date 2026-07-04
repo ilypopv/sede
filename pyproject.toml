@@ -1,17 +1,22 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=69.0", "wheel>=0.42"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "sede"
 version = "0.1.0"
 description = "Session deleter for coding assistants"
-readme = "README.md"
+readme = { file = "README.md", content-type = "text/markdown" }
+authors = [{ name = "Ilya Popov", email = "ilypopv@gmail.com" }]
 requires-python = ">=3.9"
 dependencies = ["typer>=0.12,<1.0", "questionary>=2.0,<3.0", "rich>=13.7,<14.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.2,<9.0", "pytest-cov>=5.0,<6.0"]
+
+[project.urls]
+Homepage = "https://github.com/ilypopv/sede"
+Repository = "https://github.com/ilypopv/sede"
 
 [project.scripts]
 sede = "sede.cli:app"
