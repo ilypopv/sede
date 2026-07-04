@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-"""Terminal UI for selecting and deleting assistant sessions."""
-
 from datetime import timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
