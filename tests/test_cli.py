@@ -51,10 +51,35 @@ def test_session_choice_title_contains_storage_line() -> None:
 
 def test_run_provider_flow_returns_true_when_no_sessions(monkeypatch) -> None:
     monkeypatch.setattr(cli, "discover_sessions", lambda provider: [])
+    monkeypatch.setattr(cli, "_wait_for_any_key", lambda message: None)
 
     result = cli._run_provider_flow("claude", yes=True)
 
     assert result is True
+
+
+def test_run_provider_flow_prints_header_when_no_sessions(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "discover_sessions", lambda provider: [])
+    monkeypatch.setattr(cli, "_wait_for_any_key", lambda message: None)
+
+    cli._run_provider_flow("claude", yes=True)
+
+    output = capsys.readouterr().out
+    assert "Available sessions: Claude Code" in output
+    assert "0 session(s) loaded. Total size: 0 B." in output
+    assert "No sessions found for Claude Code" in output
+
+
+def test_run_provider_flow_waits_for_keypress_when_no_sessions(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "discover_sessions", lambda provider: [])
+    calls = []
+
+    monkeypatch.setattr(cli, "_wait_for_any_key", lambda message: calls.append(message))
+
+    result = cli._run_provider_flow("claude", yes=True)
+
+    assert result is True
+    assert calls == [" Press any key to go back... "]
 
 
 def test_run_provider_flow_returns_true_when_back(monkeypatch) -> None:
@@ -199,3 +224,50 @@ def test_run_provider_flow_collects_failures(monkeypatch) -> None:
 
 def test_print_home_screen_renders_without_crash() -> None:
     cli._print_home_screen()
+
+
+def test_print_home_screen_shows_dynamic_version(capsys) -> None:
+    cli._print_home_screen()
+
+    output = capsys.readouterr().out
+    assert f"Session Deleter v{cli.__version__}" in output
+
+
+def test_print_provider_header_reports_total_size(capsys) -> None:
+    sessions = [_sample_session("claude"), _sample_session("copilot")]
+
+    cli._print_provider_header("claude", sessions)
+
+    output = capsys.readouterr().out
+    assert "Available sessions: Claude Code" in output
+    assert "2 session(s) loaded." in output
+    assert f"Total size: {cli._human_size(3072)}." in output
+
+
+def test_print_provider_header_handles_empty_sessions(capsys) -> None:
+    cli._print_provider_header("copilot", [])
+
+    output = capsys.readouterr().out
+    assert "Available sessions: GitHub Copilot" in output
+    assert "0 session(s) loaded. Total size: 0 B." in output
+
+
+def test_run_provider_flow_header_reports_total_size(monkeypatch, capsys) -> None:
+    s1 = _sample_session("claude")
+    s2 = SessionRecord(
+        provider="claude",
+        session_id="sid-2",
+        title="Second",
+        project_path="/tmp/p2",
+        size_bytes=2048,
+        updated_at=datetime(2026, 7, 4, 11, 0, tzinfo=timezone.utc),
+        storage_path=Path.home() / ".claude" / "projects" / "p2" / "sid-2.jsonl",
+    )
+    monkeypatch.setattr(cli, "discover_sessions", lambda provider: [s1, s2])
+    monkeypatch.setattr(cli, "_pick_sessions", lambda sessions: cli._BACK_SENTINEL)
+
+    cli._run_provider_flow("claude", yes=True)
+
+    output = capsys.readouterr().out
+    assert "2 session(s) loaded." in output
+    assert f"Total size: {cli._human_size(1536 + 2048)}." in output
