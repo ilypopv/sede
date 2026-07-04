@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-"""Core data models for session discovery and deletion."""
-
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
