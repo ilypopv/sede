@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from questionary import Choice
+from questionary.prompts.common import Separator
 from typer.testing import CliRunner
 
 from sede import cli
@@ -204,6 +206,54 @@ def test_human_size_formats_units() -> None:
     assert cli._human_size(0) == "0 B"
     assert cli._human_size(1024) == "1.0 KB"
     assert cli._human_size(1024 * 1024) == "1.0 MB"
+
+
+def test_compute_toggled_select_all_selects_when_none_selected() -> None:
+    choices = [Choice(title="a", value="a"), Choice(title="b", value="b")]
+
+    result = cli._compute_toggled_select_all(choices, [])
+
+    assert result == ["a", "b"]
+
+
+def test_compute_toggled_select_all_selects_when_partially_selected() -> None:
+    choices = [Choice(title="a", value="a"), Choice(title="b", value="b")]
+
+    result = cli._compute_toggled_select_all(choices, ["a"])
+
+    assert result == ["a", "b"]
+
+
+def test_compute_toggled_select_all_deselects_when_all_selected() -> None:
+    choices = [Choice(title="a", value="a"), Choice(title="b", value="b")]
+
+    result = cli._compute_toggled_select_all(choices, ["a", "b"])
+
+    assert result == []
+
+
+def test_compute_toggled_select_all_ignores_separators_and_disabled() -> None:
+    choices = [
+        Choice(title="a", value="a"),
+        Separator(" "),
+        Choice(title="b", value="b", disabled="locked"),
+    ]
+
+    result = cli._compute_toggled_select_all(choices, [])
+
+    assert result == ["a"]
+
+    result_after_full_selection = cli._compute_toggled_select_all(choices, ["a"])
+
+    assert result_after_full_selection == []
+
+
+def test_compute_toggled_select_all_handles_no_selectable_choices() -> None:
+    choices = [Separator(" ")]
+
+    result = cli._compute_toggled_select_all(choices, [])
+
+    assert result == []
 
 
 def test_run_provider_flow_collects_failures(monkeypatch) -> None:
