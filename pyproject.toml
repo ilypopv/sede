@@ -7,6 +7,7 @@ name = "sede"
 version = "0.1.0"
 description = "Session deleter for coding assistants"
 readme = { file = "README.md", content-type = "text/markdown" }
+license = { text = "MIT" }
 authors = [{ name = "Ilya Popov", email = "ilypopv@gmail.com" }]
 requires-python = ">=3.9"
 dependencies = ["typer>=0.12,<1.0", "questionary>=2.0,<3.0", "rich>=13.7,<14.0"]
