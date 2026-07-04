@@ -162,6 +162,7 @@ def test_pick_sessions_maps_selected_ids(monkeypatch) -> None:
 
     selected = cli._pick_sessions([s1, s2])
 
+    assert isinstance(selected, list)
     assert [x.session_id for x in selected] == ["sid", "sid-2"]
 
 
