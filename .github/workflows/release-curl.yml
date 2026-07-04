@@ -48,11 +48,24 @@ jobs:
             esac
           done
 
-          if command -v python3 >/dev/null 2>&1; then
-            PYTHON_BIN="python3"
-          elif command -v python >/dev/null 2>&1; then
-            PYTHON_BIN="python"
-          else
+          PYTHON_BIN=""
+          for candidate in python3 /usr/bin/python3 python; do
+            if ! command -v "$candidate" >/dev/null 2>&1; then
+              continue
+            fi
+
+            if "$candidate" -c "import venv" >/dev/null 2>&1; then
+              PYTHON_BIN="$candidate"
+              break
+            fi
+
+            # Keep first available Python as fallback for virtualenv.
+            if [[ -z "$PYTHON_BIN" ]]; then
+              PYTHON_BIN="$candidate"
+            fi
+          done
+
+          if [[ -z "$PYTHON_BIN" ]]; then
             echo "Python is required but was not found. Install Python 3.9+ first." >&2
             exit 1
           fi
@@ -71,7 +84,15 @@ jobs:
 
           echo "Installing sede (${SOURCE})..."
           mkdir -p "$INSTALL_ROOT" "$BIN_DIR"
-          "$PYTHON_BIN" -m venv "$VENV_DIR"
+
+          if "$PYTHON_BIN" -c "import venv" >/dev/null 2>&1; then
+            "$PYTHON_BIN" -m venv "$VENV_DIR"
+          else
+            echo "Python '$PYTHON_BIN' has no venv module. Falling back to virtualenv..."
+            "$PYTHON_BIN" -m pip install --user --upgrade virtualenv
+            "$PYTHON_BIN" -m virtualenv "$VENV_DIR"
+          fi
+
           "$VENV_DIR/bin/python" -m pip install --upgrade pip >/dev/null
           "$VENV_DIR/bin/pip" install "$PACKAGE_SPEC"
 
