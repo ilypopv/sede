@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timezone
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import questionary
@@ -194,12 +195,29 @@ def _print_selected_summary(sessions: List[SessionRecord]) -> None:
 
 
 def _session_choice_title(session: SessionRecord) -> str:
-    return (
-        f"{session.title}\n"
-        f"  {session.project_path}\n"
-        f"  {_human_size(session.size_bytes)} | "
-        f"{session.updated_at.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
-    )
+    storage_hint = _session_storage_hint(session)
+    return [
+        ("", f"{session.title}\n"),
+        ("", f"  {session.project_path}\n"),
+        ("fg:#7a7a7a", f"  {storage_hint}\n"),
+        (
+            "",
+            f"  {_human_size(session.size_bytes)} | "
+            f"{session.updated_at.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        ),
+    ]
+
+
+def _session_storage_hint(session: SessionRecord) -> str:
+    path_for_display = session.storage_path
+    if session.provider == "claude":
+        path_for_display = session.storage_path.parent
+
+    full_path = str(path_for_display)
+    home_path = str(Path.home())
+    if full_path.startswith(home_path):
+        return full_path.replace(home_path, "~", 1)
+    return full_path
 
 
 def _checkbox_with_back(
