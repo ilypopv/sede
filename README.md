@@ -104,7 +104,7 @@ Session selection screen:
    ~/.claude/projects/-Users-you-project/
    1.5 MB | 2026-07-03 09:44 UTC
 
-   ↑↓ Navigate  |  ← Back  |  Space Select  |  A All  |  Enter Delete  |  Ctrl+C / Q Quit
+   ↑↓ Navigate  |  ← Back  |  Space Select  |  A Toggle All  |  Enter Delete  |  Ctrl+C / Q Quit
 ```
 
 When no sessions are found for a provider, the same screen layout is shown instead:
