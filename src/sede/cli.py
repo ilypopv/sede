@@ -10,13 +10,15 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
-from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout import Layout, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 from questionary import Choice
 from questionary.constants import INVALID_INPUT
 from questionary.prompts import common as questionary_common
 from questionary.prompts.common import InquirerControl, Separator
 from rich.console import Console
 
+from . import __version__
 from .discovery import delete_session, discover_sessions
 from .models import SessionRecord
 
@@ -101,7 +103,7 @@ def _print_home_screen() -> None:
     """Renders the branded home screen banner and project info."""
 
     console.print(f"[bold cyan]{_APP_BANNER}[/bold cyan]")
-    console.print("[bold]Session Deleter Engine[/bold]")
+    console.print(f"[bold]Session Deleter v{__version__}[/bold]")
     console.print("[blue]https://github.com/ilypopv/sede/[/blue]")
     console.print(
         "[dim]Deep clean archived coding assistant sessions from your device.[/dim]"
@@ -121,15 +123,15 @@ def _run_provider_flow(provider: str, yes: bool) -> bool:
     """
 
     sessions = discover_sessions(provider)
+    _print_provider_header(provider, sessions)
+
     if not sessions:
         console.print(
-            f"[yellow]No sessions found for {_PROVIDER_LABELS[provider]}.[/yellow]"
+            f"[yellow] No sessions found for {_PROVIDER_LABELS[provider]}.[/yellow]"
         )
+        console.print()
+        _wait_for_any_key(" Press any key to go back... ")
         return True
-
-    console.print(f"[bold] Available sessions: {_PROVIDER_LABELS[provider]}[/bold]")
-    console.print(f"[dim] {len(sessions)} session(s) loaded.[/dim]")
-    console.print()
 
     selected = _pick_sessions(sessions)
     if selected == _BACK_SENTINEL:
@@ -168,6 +170,23 @@ def _run_provider_flow(provider: str, yes: bool) -> bool:
             console.print(f"  - {row}")
 
     return False
+
+
+def _print_provider_header(provider: str, sessions: List[SessionRecord]) -> None:
+    """Renders the secondary screen header shared by empty and loaded states.
+
+    Args:
+        provider: Provider key whose sessions are being displayed.
+        sessions: Discovered sessions for the provider (may be empty).
+    """
+
+    total_size = sum(session.size_bytes for session in sessions)
+    console.print(f"[bold] Available sessions: {_PROVIDER_LABELS[provider]}[/bold]")
+    console.print(
+        f"[dim] {len(sessions)} session(s) loaded. "
+        f"Total size: {_human_size(total_size)}.[/dim]"
+    )
+    console.print()
 
 
 def _pick_sessions(sessions: List[SessionRecord]) -> Union[List[SessionRecord], str]:
@@ -250,6 +269,40 @@ def _session_storage_hint(session: SessionRecord) -> str:
     if full_path.startswith(home_path):
         return full_path.replace(home_path, "~", 1)
     return full_path
+
+
+def _wait_for_any_key(message: str) -> None:  # pragma: no cover
+    """Blocks until the user presses any key, including arrow keys.
+
+    Uses a bare prompt_toolkit ``Application`` (no input buffer) so that
+    every keypress, arrow keys included, falls through to our ``Keys.Any``
+    binding instead of being consumed by default buffer/history bindings.
+
+    Note: the binding intentionally omits ``eager=True``. Eager bindings
+    are matched before prompt_toolkit's built-in cursor-position-response
+    (CPR) handler, which would otherwise cause the terminal's automatic CPR
+    reply (sent moments after the screen renders) to be misread as a user
+    keypress and exit the screen on its own.
+
+    Args:
+        message: Prompt text shown while waiting for input.
+    """
+
+    control = FormattedTextControl(text=[("class:question", message)])
+    layout = Layout(Window(content=control))
+
+    bindings = KeyBindings()
+
+    @bindings.add(Keys.Any)
+    def _continue(event: Any) -> None:
+        event.app.exit(result=None)
+
+    application = Application(layout=layout, key_bindings=bindings, style=None)
+
+    try:
+        application.run()
+    except KeyboardInterrupt:
+        return
 
 
 def _checkbox_with_back(
