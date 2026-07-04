@@ -208,7 +208,7 @@ def _pick_sessions(sessions: List[SessionRecord]) -> Union[List[SessionRecord], 
         [
             Separator(" "),
             Separator(
-                "↑↓ Navigate  |  ← Back  |  Space Select  |  A All  |  Enter Delete  |  Ctrl+C / Q Quit"
+                "↑↓ Navigate  |  ← Back  |  Space Select  |  A Toggle All  |  Enter Delete  |  Ctrl+C / Q Quit"
             ),
         ]
     )
@@ -305,6 +305,36 @@ def _wait_for_any_key(message: str) -> None:  # pragma: no cover
         return
 
 
+def _compute_toggled_select_all(
+    choices: Sequence[Union[Choice, Separator]],
+    selected_options: List[Any],
+) -> List[Any]:
+    """Computes the next selection state for the "select/deselect all" key.
+
+    Selects every selectable choice when not all of them are currently
+    selected; deselects everything when they already are, so a single key
+    toggles between "select all" and "clear selection".
+
+    Args:
+        choices: All choices shown in the checkbox prompt, including
+            separators and disabled items.
+        selected_options: Currently selected choice values.
+
+    Returns:
+        The new list of selected values.
+    """
+
+    selectable_values = [
+        item.value
+        for item in choices
+        if not isinstance(item, Separator) and not item.disabled
+    ]
+    all_selected = bool(selectable_values) and all(
+        value in selected_options for value in selectable_values
+    )
+    return [] if all_selected else selectable_values
+
+
 def _checkbox_with_back(
     message: str,
     choices: Sequence[Union[Choice, Separator]],
@@ -370,12 +400,10 @@ def _checkbox_with_back(
         perform_validation(get_selected_values())
 
     @bindings.add("a", eager=True)
-    def _select_all(_event):
-        control.selected_options = [
-            item.value
-            for item in control.choices
-            if not isinstance(item, Separator) and not item.disabled
-        ]
+    def _toggle_select_all(_event):
+        control.selected_options = _compute_toggled_select_all(
+            control.choices, control.selected_options
+        )
         perform_validation(get_selected_values())
 
     def _move_cursor_down(_event):
