@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-"""Session discovery and deletion logic for supported assistants."""
-
 import json
 import shutil
 from datetime import datetime, timezone
