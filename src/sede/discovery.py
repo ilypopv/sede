@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Session discovery and deletion logic for supported assistants."""
+
 import json
 import shutil
 from datetime import datetime, timezone
@@ -10,6 +12,18 @@ from .models import SessionRecord
 
 
 def discover_sessions(provider: str) -> List[SessionRecord]:
+    """Discovers stored sessions for the requested assistant provider.
+
+    Args:
+        provider: Assistant provider key, e.g. "claude" or "copilot".
+
+    Returns:
+        A list of discovered sessions sorted by last update time, newest first.
+
+    Raises:
+        ValueError: If the provider is not supported.
+    """
+
     if provider == "claude":
         return _discover_claude_sessions()
     if provider == "copilot":
@@ -18,6 +32,16 @@ def discover_sessions(provider: str) -> List[SessionRecord]:
 
 
 def delete_session(session: SessionRecord) -> None:
+    """Deletes the session from disk.
+
+    Args:
+        session: Session descriptor containing provider and storage path.
+
+    Raises:
+        ValueError: If the provider is not supported.
+        OSError: If filesystem deletion fails.
+    """
+
     if session.provider == "claude":
         session.storage_path.unlink(missing_ok=False)
         return
@@ -28,6 +52,8 @@ def delete_session(session: SessionRecord) -> None:
 
 
 def _discover_claude_sessions() -> List[SessionRecord]:
+    """Discovers Claude sessions from ~/.claude/projects."""
+
     root = Path.home() / ".claude" / "projects"
     if not root.exists():
         return []
@@ -60,6 +86,8 @@ def _discover_claude_sessions() -> List[SessionRecord]:
 
 
 def _discover_copilot_sessions() -> List[SessionRecord]:
+    """Discovers Copilot sessions from ~/.copilot/session-state."""
+
     root = Path.home() / ".copilot" / "session-state"
     if not root.exists():
         return []
@@ -97,6 +125,15 @@ def _discover_copilot_sessions() -> List[SessionRecord]:
 
 
 def _read_claude_metadata(jsonl_path: Path) -> Dict[str, str]:
+    """Extracts useful metadata from a Claude jsonl session file.
+
+    Args:
+        jsonl_path: Path to the Claude session jsonl file.
+
+    Returns:
+        A dictionary that may contain keys like "cwd" and "prompt".
+    """
+
     result: Dict[str, str] = {}
 
     with jsonl_path.open("r", encoding="utf-8") as f:
@@ -129,7 +166,8 @@ def _read_claude_metadata(jsonl_path: Path) -> Dict[str, str]:
 
 
 def _decode_claude_project_path(encoded: str) -> str:
-    # Claude stores project path by replacing slashes with dashes.
+    """Decodes Claude's dash-encoded project directory name to a path string."""
+
     if not encoded:
         return "Unknown project"
     if encoded.startswith("-"):
@@ -138,6 +176,18 @@ def _decode_claude_project_path(encoded: str) -> str:
 
 
 def _read_simple_yaml(path: Path) -> Dict[str, str]:
+    """Reads a simple key:value YAML-like file into a dictionary.
+
+    This parser intentionally handles only flat `key: value` rows used by
+    Copilot workspace metadata.
+
+    Args:
+        path: Path to the YAML file.
+
+    Returns:
+        Parsed key/value pairs.
+    """
+
     values: Dict[str, str] = {}
 
     with path.open("r", encoding="utf-8") as f:
@@ -154,6 +204,8 @@ def _read_simple_yaml(path: Path) -> Dict[str, str]:
 
 
 def _directory_size_bytes(path: Path) -> int:
+    """Computes total size in bytes for all files under a directory."""
+
     total = 0
     for entry in path.rglob("*"):
         if entry.is_file():
@@ -162,6 +214,8 @@ def _directory_size_bytes(path: Path) -> int:
 
 
 def _parse_iso_dt(value: Optional[str]) -> Optional[datetime]:
+    """Parses ISO datetime text and ensures timezone-aware UTC values."""
+
     if not value:
         return None
 
@@ -177,6 +231,8 @@ def _parse_iso_dt(value: Optional[str]) -> Optional[datetime]:
 
 
 def _shorten(text: str, limit: int) -> str:
+    """Shortens text with ellipsis when it exceeds the provided limit."""
+
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "..."
