@@ -78,7 +78,7 @@ Main screen:
   ____) | |____| |__| | |____
  |_____/|______|_____/|______|
 
-Session Deleter v0.1.2
+Session Deleter v0.1.3
 https://github.com/ilypopv/sede/
 Deep clean archived coding assistant sessions from your device.
 
@@ -89,7 +89,7 @@ Deep clean archived coding assistant sessions from your device.
    2. GitHub Copilot
    Delete archived Copilot sessions
 
-   ↑↓ Navigate  |  Enter / → Select  |  Ctrl+C / Q Quit
+↑↓ Navigate  |  Enter / → Select  |  Ctrl+C / Q Quit
 ```
 
 Session selection screen:
@@ -104,7 +104,7 @@ Session selection screen:
    ~/.claude/projects/-Users-you-project/
    1.5 MB | 2026-07-03 09:44 UTC
 
-   ↑↓ Navigate  |  ← Back  |  Space Select  |  A Toggle All  |  Enter Delete  |  Ctrl+C / Q Quit
+↑↓ Navigate  |  ← Back  |  Space Select  |  A Toggle All  |  Enter Delete  |  Ctrl+C / Q Quit
 ```
 
 When no sessions are found for a provider, the same screen layout is shown instead:
