@@ -7,11 +7,13 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, 
 import questionary
 import typer
 from prompt_toolkit.application import Application
+from prompt_toolkit.filters import Always, IsDone
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
-from prompt_toolkit.layout import Layout, Window
+from prompt_toolkit.layout import ConditionalContainer, HSplit, Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.dimension import LayoutDimension
 from questionary import Choice
 from questionary.constants import INVALID_INPUT
 from questionary.prompts import common as questionary_common
@@ -43,6 +45,41 @@ _APP_BANNER = r"""
   ____) | |____| |__| | |____ 
  |_____/|______|_____/|______|
 """
+
+
+def _create_inquirer_layout_with_footer(
+    control: InquirerControl,
+    get_prompt_tokens: Callable[[], List[Tuple[str, str]]],
+    footer: str,
+) -> Layout:
+    """Creates the default questionary layout with an external footer row."""
+
+    layout = questionary_common.create_inquirer_layout(control, get_prompt_tokens)
+    if not isinstance(layout.container, HSplit):
+        return layout
+
+    for child in layout.container.children:
+        if (
+            isinstance(child, ConditionalContainer)
+            and isinstance(child.content, Window)
+            and child.content.content is control
+        ):
+            child.content.dont_extend_height = Always()
+            break
+
+    footer_control = FormattedTextControl(
+        text=lambda: [("", "\n"), ("class:text", footer)],
+    )
+    layout.container.children.append(
+        ConditionalContainer(
+            Window(
+                height=LayoutDimension.exact(2),
+                content=footer_control,
+            ),
+            filter=~IsDone(),
+        )
+    )
+    return layout
 
 
 @app.command()
@@ -204,18 +241,12 @@ def _pick_sessions(sessions: List[SessionRecord]) -> Union[List[SessionRecord], 
         for session in sessions
     ]
 
-    choices.extend(
-        [
-            Separator(" "),
-            Separator(
-                "↑↓ Navigate  |  ← Back  |  Space Select  |  A Toggle All  |  Enter Delete  |  Ctrl+C / Q Quit"
-            ),
-        ]
-    )
-
     selected_ids = _checkbox_with_back(
         "Choose sessions to delete",
         choices=choices,
+        footer=(
+            "↑↓ Navigate  |  ← Back  |  Space Select  |  A Toggle All  |  Enter Delete  |  Ctrl+C / Q Quit"
+        ),
         validate=lambda selected: True if selected else "Select at least one session",
     )
 
@@ -338,6 +369,7 @@ def _compute_toggled_select_all(
 def _checkbox_with_back(
     message: str,
     choices: Sequence[Union[Choice, Separator]],
+    footer: str,
     validate: ValidateSelectionFn,
 ) -> Union[List[str], str, None]:  # pragma: no cover
     """Runs custom checkbox prompt with explicit back and quit controls."""
@@ -372,9 +404,10 @@ def _checkbox_with_back(
 
         return valid
 
-    layout = questionary_common.create_inquirer_layout(
+    layout = _create_inquirer_layout_with_footer(
         control,
         get_prompt_tokens,
+        footer,
     )
 
     bindings = KeyBindings()
@@ -462,10 +495,9 @@ def _provider_menu_with_quit() -> Optional[str]:  # pragma: no cover
             value="claude",
         ),
         Choice(
-            "2. GitHub Copilot\n   Delete archived Copilot sessions\n",
+            "2. GitHub Copilot\n   Delete archived Copilot sessions",
             value="copilot",
         ),
-        Separator("↑↓ Navigate  |  Enter / → Select  |  Ctrl+C / Q Quit"),
     ]
 
     control = InquirerControl(choices, pointer="➤")
@@ -473,9 +505,10 @@ def _provider_menu_with_quit() -> Optional[str]:  # pragma: no cover
     def get_prompt_tokens() -> List[Tuple[str, str]]:
         return [("class:question", " Choose coding assistant ")]
 
-    layout = questionary_common.create_inquirer_layout(
+    layout = _create_inquirer_layout_with_footer(
         control,
         get_prompt_tokens,
+        "↑↓ Navigate  |  Enter / → Select  |  Ctrl+C / Q Quit",
     )
 
     bindings = KeyBindings()
