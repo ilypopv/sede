@@ -41,12 +41,31 @@ def delete_session(session: SessionRecord) -> None:
     """
 
     if session.provider == "claude":
-        session.storage_path.unlink(missing_ok=False)
+        _delete_claude_session_file(session.storage_path)
         return
     if session.provider == "copilot":
         shutil.rmtree(session.storage_path)
         return
     raise ValueError(f"Unsupported provider: {session.provider}")
+
+
+def _delete_claude_session_file(session_file: Path) -> None:
+    """Deletes a Claude session file and prunes empty parent directory.
+
+    Args:
+        session_file: Path to the Claude session jsonl file.
+    """
+
+    session_file.unlink(missing_ok=False)
+
+    parent_dir = session_file.parent
+    try:
+        if parent_dir.is_dir() and not any(parent_dir.iterdir()):
+            parent_dir.rmdir()
+    except OSError:
+        # Best-effort cleanup only; deletion of the selected session file has
+        # already succeeded.
+        return
 
 
 def _discover_claude_sessions() -> List[SessionRecord]:
