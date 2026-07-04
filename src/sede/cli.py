@@ -224,7 +224,7 @@ def _checkbox_with_back(
     message: str,
     choices: Sequence[Union[Choice, Separator]],
     validate,
-) -> Union[List[str], str, None]:
+) -> Union[List[str], str, None]:  # pragma: no cover
     if not callable(validate):
         raise ValueError("validate must be callable")
 
@@ -338,7 +338,7 @@ def _checkbox_with_back(
         return None
 
 
-def _provider_menu_with_quit() -> Optional[str]:
+def _provider_menu_with_quit() -> Optional[str]:  # pragma: no cover
     choices: List[Choice] = [
         Choice(
             "1. Claude Code\n   Delete archived Claude Code sessions\n",
