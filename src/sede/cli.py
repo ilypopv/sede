@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 from datetime import timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import questionary
 import typer
-from questionary import Choice
-from questionary.constants import DEFAULT_QUESTION_PREFIX, INVALID_INPUT
-from questionary.prompts.common import InquirerControl, Separator
-from rich.console import Console
-
 from prompt_toolkit.application import Application
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
+from questionary import Choice
+from questionary.constants import DEFAULT_QUESTION_PREFIX, INVALID_INPUT
+from questionary.prompts.common import InquirerControl, Separator
+from rich.console import Console
 
 from .discovery import delete_session, discover_sessions
 from .models import SessionRecord
@@ -89,12 +88,8 @@ def _run_provider_flow(provider: str, yes: bool) -> bool:
         )
         return True
 
-    console.print(
-        f"[bold]Available sessions: {_PROVIDER_LABELS[provider]}[/bold]"
-    )
-    console.print(
-        f"[dim]{len(sessions)} session(s) loaded.[/dim]"
-    )
+    console.print(f"[bold]Available sessions: {_PROVIDER_LABELS[provider]}[/bold]")
+    console.print(f"[dim]{len(sessions)} session(s) loaded.[/dim]")
 
     selected = _pick_sessions(sessions)
     if selected == _BACK_SENTINEL:
@@ -221,9 +216,7 @@ def _checkbox_with_back(
                 error_text = str(verdict)
             error_message = FormattedText([("class:validation-toolbar", error_text)])
         control.error_message = (
-            error_message
-            if not valid and control.submission_attempted
-            else None
+            error_message if not valid and control.submission_attempted else None
         )
 
         return valid
