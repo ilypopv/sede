@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
+from prompt_toolkit.formatted_text import to_formatted_text
 from prompt_toolkit.layout import ConditionalContainer, HSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 from questionary import Choice
 from questionary.prompts.common import InquirerControl, Separator
 from typer.testing import CliRunner
@@ -270,9 +276,10 @@ def test_create_inquirer_layout_with_footer_adds_external_footer() -> None:
     footer_container = layout.container.children[-1]
     assert isinstance(footer_container, ConditionalContainer)
     assert isinstance(footer_container.content, Window)
+    assert isinstance(footer_container.content.content, FormattedTextControl)
 
     footer_text = footer_container.content.content.text
-    tokens = footer_text() if callable(footer_text) else footer_text
+    tokens = to_formatted_text(footer_text)
     assert ("class:text", "Footer row") in tokens
 
     choices_container = next(
@@ -282,7 +289,8 @@ def test_create_inquirer_layout_with_footer_adds_external_footer() -> None:
         and isinstance(child.content, Window)
         and child.content.content is control
     )
-    assert choices_container.content.dont_extend_height()
+    choices_window = cast(Window, choices_container.content)
+    assert choices_window.dont_extend_height()
 
 
 def test_run_provider_flow_collects_failures(monkeypatch) -> None:
@@ -350,3 +358,320 @@ def test_run_provider_flow_header_reports_total_size(monkeypatch, capsys) -> Non
     output = capsys.readouterr().out
     assert "2 session(s) loaded." in output
     assert f"Total size: {cli._human_size(1536 + 2048)}." in output
+
+
+# ---------------------------------------------------------------------------
+# --help / --version flags
+# ---------------------------------------------------------------------------
+
+
+def test_help_flag_shows_commands() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "COMMANDS" in result.output
+    assert "sede update" in result.output
+    assert "sede remove" in result.output
+    assert "sede --help" in result.output
+    assert "sede --version" in result.output
+
+
+def test_help_flag_short_alias() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["-h"])
+
+    assert result.exit_code == 0
+    assert "COMMANDS" in result.output
+
+
+def test_version_flag_shows_version() -> None:
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["--version"])
+
+    assert result.exit_code == 0
+    assert f"sede v{cli.__version__}" in result.output
+
+
+# ---------------------------------------------------------------------------
+# sede update
+# ---------------------------------------------------------------------------
+
+
+def test_update_cmd_already_on_latest(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_fetch_latest_version", lambda: cli.__version__)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["update"])
+
+    assert result.exit_code == 0
+    assert "already the latest" in result.output
+
+
+def test_update_cmd_runs_installer_for_newer_version(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_fetch_latest_version", lambda: "9.9.9")
+    installed = []
+    monkeypatch.setattr(cli, "_run_installer", lambda: installed.append(True))
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["update"])
+
+    assert result.exit_code == 0
+    assert installed == [True]
+    assert "9.9.9" in result.output
+
+
+def test_update_cmd_exits_when_fetch_fails(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_fetch_latest_version", lambda: None)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["update"])
+
+    assert result.exit_code == 1
+    assert "Could not check for updates" in result.output
+
+
+# ---------------------------------------------------------------------------
+# sede remove
+# ---------------------------------------------------------------------------
+
+
+def test_remove_cmd_runs_uninstaller(monkeypatch) -> None:
+    removed = []
+    monkeypatch.setattr(cli, "_run_uninstaller", lambda: removed.append(True))
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["remove"])
+
+    assert result.exit_code == 0
+    assert removed == [True]
+
+
+# ---------------------------------------------------------------------------
+# _fetch_latest_version
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_latest_version_strips_v_prefix(monkeypatch) -> None:
+    class _MockResponse:
+        def read(self):
+            return json.dumps({"tag_name": "v1.2.3"}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: _MockResponse())
+
+    assert cli._fetch_latest_version() == "1.2.3"
+
+
+def test_fetch_latest_version_handles_no_v_prefix(monkeypatch) -> None:
+    class _MockResponse:
+        def read(self):
+            return json.dumps({"tag_name": "2.0.0"}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: _MockResponse())
+
+    assert cli._fetch_latest_version() == "2.0.0"
+
+
+def test_fetch_latest_version_returns_none_on_network_error(monkeypatch) -> None:
+    import urllib.request
+
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("fail")),
+    )
+
+    assert cli._fetch_latest_version() is None
+
+
+def test_fetch_latest_version_returns_none_on_empty_tag(monkeypatch) -> None:
+    class _MockResponse:
+        def read(self):
+            return json.dumps({"tag_name": ""}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: _MockResponse())
+
+    assert cli._fetch_latest_version() is None
+
+
+# ---------------------------------------------------------------------------
+# _run_shell_command
+# ---------------------------------------------------------------------------
+
+
+class _MockSubprocessResult:
+    def __init__(self, returncode: int = 0):
+        self.returncode = returncode
+
+
+def test_run_shell_command_uses_shell_on_unix(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: (
+            calls.append({"cmd": cmd, "kw": kw}) or _MockSubprocessResult()
+        ),
+    )
+
+    rc = cli._run_shell_command("unix-cmd", "win-cmd")
+
+    assert rc == 0
+    assert calls[0]["cmd"] == "unix-cmd"
+    assert calls[0]["kw"].get("shell") is True
+
+
+def test_run_shell_command_uses_powershell_on_windows(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: (
+            calls.append({"cmd": cmd, "kw": kw}) or _MockSubprocessResult()
+        ),
+    )
+
+    rc = cli._run_shell_command("unix-cmd", "win-cmd")
+
+    assert rc == 0
+    assert isinstance(calls[0]["cmd"], list)
+    assert calls[0]["cmd"][0] == "powershell"
+    assert "win-cmd" in calls[0]["cmd"]
+
+
+def test_run_shell_command_returns_nonzero_exit_code(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: _MockSubprocessResult(returncode=2),
+    )
+
+    assert cli._run_shell_command("fail-cmd", "fail-cmd") == 2
+
+
+# ---------------------------------------------------------------------------
+# _run_installer / _run_uninstaller error paths
+# ---------------------------------------------------------------------------
+
+
+def test_update_cmd_exits_on_installer_failure(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_fetch_latest_version", lambda: "9.9.9")
+    monkeypatch.setattr(cli, "_run_shell_command", lambda unix, win: 2)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["update"])
+
+    assert result.exit_code == 2
+    assert "Installation failed" in result.output
+
+
+def test_remove_cmd_exits_on_uninstaller_failure(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_run_shell_command", lambda unix, win: 3)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["remove"])
+
+    assert result.exit_code == 3
+    assert "Removal failed" in result.output
+
+
+# ---------------------------------------------------------------------------
+# main callback – loop-back and quit-from-menu paths
+# ---------------------------------------------------------------------------
+
+
+def test_main_exits_when_pick_provider_returns_none(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_pick_provider", lambda value: None)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, [])
+
+    assert result.exit_code == 0
+
+
+def test_main_loops_back_when_flow_returns_true(monkeypatch) -> None:
+    calls = []
+    returns = iter(["claude", None])
+    monkeypatch.setattr(cli, "_pick_provider", lambda value: next(returns))
+    monkeypatch.setattr(
+        cli,
+        "_run_provider_flow",
+        lambda provider, yes: calls.append(provider) or True,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, [])
+
+    assert result.exit_code == 0
+    assert calls == ["claude"]
+
+
+# ---------------------------------------------------------------------------
+# _run_provider_flow – nothing-selected path
+# ---------------------------------------------------------------------------
+
+
+def test_run_provider_flow_returns_false_when_nothing_selected(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "discover_sessions", lambda provider: [_sample_session()])
+    monkeypatch.setattr(cli, "_pick_sessions", lambda sessions: [])
+
+    result = cli._run_provider_flow("claude", yes=True)
+
+    assert result is False
+
+
+def test_run_provider_flow_prints_nothing_selected_message(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "discover_sessions", lambda provider: [_sample_session()])
+    monkeypatch.setattr(cli, "_pick_sessions", lambda sessions: [])
+
+    cli._run_provider_flow("claude", yes=True)
+
+    output = capsys.readouterr().out
+    assert "Nothing selected" in output
+
+
+# ---------------------------------------------------------------------------
+# _session_storage_hint – path outside home directory
+# ---------------------------------------------------------------------------
+
+
+def test_session_storage_hint_returns_full_path_when_outside_home() -> None:
+    storage = Path("/var/data/projects/p/session-state/sid")
+    record = SessionRecord(
+        provider="copilot",
+        session_id="sid",
+        title="Session",
+        project_path="/var/project",
+        size_bytes=100,
+        updated_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        storage_path=storage,
+    )
+    hint = cli._session_storage_hint(record)
+    assert hint == str(storage)

@@ -39,21 +39,30 @@ After installation, run:
 sede
 ```
 
-## Deinstallation (Full Removal)
+## Commands
 
-Deinstallation is designed to remove `sede` from your user profile completely.
+| Command | Description |
+| ------- | ----------- |
+| `sede` | Main menu — interactive session browser |
+| `sede update` | Update sede to the latest version |
+| `sede remove` | Remove sede from your system |
+| `sede --help` | Show help |
+| `sede --version` | Show version |
 
-macOS/Linux:
+### Update
+
+Checks GitHub for a newer release. If your installed version is already the latest, `sede` says so and exits without reinstalling. If a newer version is found, the install script runs automatically (same script used during first install).
 
 ```bash
-curl -fsSL https://github.com/ilypopv/sede/releases/latest/download/uninstall.sh | bash
+sede update
 ```
 
-Windows (PowerShell):
+### Remove
 
-```powershell
-curl.exe -fsSL https://github.com/ilypopv/sede/releases/latest/download/uninstall.ps1 -o uninstall-sede.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall-sede.ps1
+Runs the uninstall script to remove the `sede` command.
+
+```bash
+sede remove
 ```
 
 Removed by uninstall scripts:
@@ -68,17 +77,40 @@ Not removed by uninstall scripts:
 
 ## TUI Preview
 
+Help screen (`sede --help`):
+
+```text
+               _      
+  ___  ___  __| | ___ 
+ / __|/ _ \/ _` |/ _ \
+ \__ \  __/ (_| |  __/
+ |___/\___|\__,_|\___|
+
+Session Deleter v0.1.4
+https://github.com/ilypopv/sede/
+
+COMMANDS
+  sede                        Main menu
+  sede update                 Update to latest version
+  sede remove                 Remove sede from system
+  sede --help                 Show help
+  sede --version              Show version
+
+OPTIONS
+  --assistant, -a TEXT        Assistant to manage: claude or copilot
+  --yes, -y                   Skip confirmation prompt before deletion
+```
+
 Main screen:
 
 ```text
-   _____ ______ _____  ______
-  / ____|  ____|  __ \|  ____|
- | (___ | |__  | |  | | |__
-  \___ \|  __| | |  | |  __|
-  ____) | |____| |__| | |____
- |_____/|______|_____/|______|
+               _      
+  ___  ___  __| | ___ 
+ / __|/ _ \/ _` |/ _ \
+ \__ \  __/ (_| |  __/
+ |___/\___|\__,_|\___|
 
-Session Deleter v0.1.3
+Session Deleter v0.1.4
 https://github.com/ilypopv/sede/
 Deep clean archived coding assistant sessions from your device.
 
