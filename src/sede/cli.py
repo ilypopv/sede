@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import urllib.request
 from datetime import timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
@@ -24,7 +28,13 @@ from . import __version__
 from .discovery import delete_session, discover_sessions
 from .models import SessionRecord
 
-app = typer.Typer(add_completion=False, help="Session deleter for coding assistants")
+app = typer.Typer(
+    invoke_without_command=True,
+    add_completion=False,
+    add_help_option=False,
+    no_args_is_help=False,
+    help="Session deleter for coding assistants",
+)
 console = Console()
 
 ValidateSelectionFn = Callable[[List[str]], Union[bool, str]]
@@ -38,13 +48,114 @@ _PROVIDER_LABELS = {
 _BACK_SENTINEL = "__sede_back__"
 
 _APP_BANNER = r"""
-   _____ ______ _____  ______ 
+   _____ ______ _____  ______
   / ____|  ____|  __ \|  ____|
- | (___ | |__  | |  | | |__   
-  \___ \|  __| | |  | |  __|  
-  ____) | |____| |__| | |____ 
+ | (___ | |__  | |  | | |__
+  \___ \|  __| | |  | |  __|
+  ____) | |____| |__| | |____
  |_____/|______|_____/|______|
 """
+
+_INSTALL_CMD_UNIX = (
+    "curl -fsSL"
+    " https://github.com/ilypopv/sede/releases/latest/download/install.sh | bash"
+)
+_INSTALL_CMD_WIN = (
+    "curl.exe -fsSL"
+    " https://github.com/ilypopv/sede/releases/latest/download/install.ps1"
+    ' -o "$env:TEMP\\install-sede.ps1";'
+    " powershell -NoProfile -ExecutionPolicy Bypass"
+    ' -File "$env:TEMP\\install-sede.ps1"'
+)
+_UNINSTALL_CMD_UNIX = (
+    "curl -fsSL"
+    " https://github.com/ilypopv/sede/releases/latest/download/uninstall.sh | bash"
+)
+_UNINSTALL_CMD_WIN = (
+    "curl.exe -fsSL"
+    " https://github.com/ilypopv/sede/releases/latest/download/uninstall.ps1"
+    ' -o "$env:TEMP\\uninstall-sede.ps1";'
+    " powershell -NoProfile -ExecutionPolicy Bypass"
+    ' -File "$env:TEMP\\uninstall-sede.ps1"'
+)
+
+_HELP_COMMANDS = [
+    ("sede", "Main menu"),
+    ("sede update", "Update to latest version"),
+    ("sede remove", "Remove sede from system"),
+    ("sede --help", "Show help"),
+    ("sede --version", "Show version"),
+]
+
+_HELP_OPTIONS = [
+    ("--assistant, -a TEXT", "Assistant to manage: claude or copilot"),
+    ("--yes, -y", "Skip confirmation prompt before deletion"),
+]
+
+_HELP_COL_WIDTH = 28
+
+
+def _print_help_screen() -> None:
+    """Prints the branded help screen with command reference."""
+    console.print(f"[bold cyan]{_APP_BANNER}[/bold cyan]")
+    console.print(f"[bold]Session Deleter v{__version__}[/bold]")
+    console.print("[blue]https://github.com/ilypopv/sede/[/blue]")
+    console.print()
+    console.print("[bold]COMMANDS[/bold]")
+    for cmd, desc in _HELP_COMMANDS:
+        console.print(f"  [cyan]{cmd:<{_HELP_COL_WIDTH}}[/cyan]{desc}")
+    console.print()
+    console.print("[bold]OPTIONS[/bold]")
+    for opt, desc in _HELP_OPTIONS:
+        console.print(f"  [cyan]{opt:<{_HELP_COL_WIDTH}}[/cyan]{desc}")
+
+
+def _fetch_latest_version() -> Optional[str]:
+    """Returns the latest released version string from GitHub, or None on failure."""
+    url = "https://api.github.com/repos/ilypopv/sede/releases/latest"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "sede-cli"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        tag = data.get("tag_name", "")
+        return tag.lstrip("v") if tag else None
+    except Exception:
+        return None
+
+
+def _run_shell_command(unix_cmd: str, win_cmd: str) -> int:
+    """Runs a shell command appropriate for the current platform and returns exit code."""
+    if sys.platform == "win32":
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                win_cmd,
+            ],
+            check=False,
+        )
+    else:
+        result = subprocess.run(unix_cmd, shell=True, check=False)
+    return result.returncode
+
+
+def _run_installer() -> None:
+    """Runs the sede install script for the current platform."""
+    returncode = _run_shell_command(_INSTALL_CMD_UNIX, _INSTALL_CMD_WIN)
+    if returncode != 0:
+        console.print("[red]Installation failed.[/red]")
+        raise typer.Exit(code=returncode)
+
+
+def _run_uninstaller() -> None:
+    """Runs the sede uninstall script for the current platform."""
+    returncode = _run_shell_command(_UNINSTALL_CMD_UNIX, _UNINSTALL_CMD_WIN)
+    if returncode != 0:
+        console.print("[red]Removal failed.[/red]")
+        raise typer.Exit(code=returncode)
 
 
 def _create_inquirer_layout_with_footer(
@@ -82,8 +193,9 @@ def _create_inquirer_layout_with_footer(
     return layout
 
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     assistant: Optional[str] = typer.Option(
         None,
         "--assistant",
@@ -96,13 +208,39 @@ def main(
         "-y",
         help="Skip confirmation prompt before deletion",
     ),
+    show_help: bool = typer.Option(
+        False,
+        "--help",
+        "-h",
+        is_eager=True,
+        help="Show help and exit",
+    ),
+    show_version: bool = typer.Option(
+        False,
+        "--version",
+        is_eager=True,
+        help="Show version and exit",
+    ),
 ) -> None:
     """Application entrypoint.
 
     Args:
+        help: Whether to show the help screen and exit.
+        version: Whether to show the version and exit.
         assistant: Optional fixed assistant provider from CLI flags.
         yes: Whether to skip the deletion confirmation prompt.
     """
+
+    if show_help:
+        _print_help_screen()
+        raise typer.Exit()
+
+    if show_version:
+        console.print(f"sede v{__version__}")
+        raise typer.Exit()
+
+    if ctx.invoked_subcommand is not None:
+        return
 
     if assistant:
         provider = _pick_provider(assistant)
@@ -119,6 +257,33 @@ def main(
         should_back = _run_provider_flow(provider, yes)
         if not should_back:
             return
+
+
+@app.command("update")
+def update_cmd() -> None:
+    """Update sede to the latest version."""
+    latest = _fetch_latest_version()
+    if latest is None:
+        console.print(
+            "[red]Could not check for updates. Verify your internet connection.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    if latest == __version__:
+        console.print(
+            f"[green]sede v{__version__} is already the latest version.[/green]"
+        )
+        return
+
+    console.print(f"[bold]Updating sede from v{__version__} to v{latest}...[/bold]")
+    _run_installer()
+
+
+@app.command("remove")
+def remove_cmd() -> None:
+    """Remove sede from the system."""
+    console.print("[bold]Removing sede from your system...[/bold]")
+    _run_uninstaller()
 
 
 def _pick_provider(cli_provider: Optional[str]) -> Optional[str]:
