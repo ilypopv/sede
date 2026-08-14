@@ -1,9 +1,13 @@
 # sede: SEssion DEleter
 
+<img src="https://raw.githubusercontent.com/ilypopv/sede/main/imgs/sede.png" alt="logo" width="180" align="left">
+
 _Delete archived coding assistant sessions from terminal, fast and safely._
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ilypopv/sede/ci.yml?style=flat-square&label=CI)](https://github.com/ilypopv/sede/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
+
+<br clear="left" />
 
 ## Features
 
@@ -14,6 +18,14 @@ _Delete archived coding assistant sessions from terminal, fast and safely._
 - Safe Claude cleanup: removes selected session file and prunes empty project directory
 
 ## Installation
+
+**Recommended**
+
+```bash
+uv tool install sede
+```
+
+Or
 
 ```bash
 pipx install sede
