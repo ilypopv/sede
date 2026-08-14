@@ -1,5 +1,9 @@
 # sede: SEssion DEleter
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ilypopv/sede/feat/logo/imgs/sede.png" alt="logo" width="200">
+</p>
+
 _Delete archived coding assistant sessions from terminal, fast and safely._
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ilypopv/sede/ci.yml?style=flat-square&label=CI)](https://github.com/ilypopv/sede/actions/workflows/ci.yml)
@@ -17,6 +21,10 @@ _Delete archived coding assistant sessions from terminal, fast and safely._
 
 ```bash
 pipx install sede
+```
+
+```bash
+uv tool install sede
 ```
 
 ## Run
