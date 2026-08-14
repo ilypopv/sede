@@ -1,6 +1,6 @@
 # sede: SEssion DEleter
 
-<img src="https://raw.githubusercontent.com/ilypopv/sede/feat/logo/imgs/sede.png" alt="logo" width="180" align="left">
+<img src="https://raw.githubusercontent.com/ilypopv/sede/main/imgs/sede.png" alt="logo" width="180" align="left">
 
 _Delete archived coding assistant sessions from terminal, fast and safely._
 
