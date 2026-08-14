@@ -19,12 +19,16 @@ _Delete archived coding assistant sessions from terminal, fast and safely._
 
 ## Installation
 
-```bash
-pipx install sede
-```
+**Recommended**
 
 ```bash
 uv tool install sede
+```
+
+Or
+
+```bash
+pipx install sede
 ```
 
 ## Run
