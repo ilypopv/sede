@@ -1,6 +1,6 @@
 # sede: SEssion DEleter
 
-<p align="center">
+<p align="left">
   <img src="https://raw.githubusercontent.com/ilypopv/sede/feat/logo/imgs/sede.png" alt="logo" width="200">
 </p>
 
