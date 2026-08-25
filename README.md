@@ -12,7 +12,7 @@ _Delete archived coding assistant sessions from terminal, fast and safely._
 ## Features
 
 - Interactive TUI flow for provider selection and session deletion
-- Supports `Claude Code` and `GitHub Copilot`
+- Supports `Claude Code`, `GitHub Copilot`, and `Antigravity`
 - Multi-select deletion with confirmation
 - Storage-aware list: title, project path, storage path, size, updated-at
 - Safe Claude cleanup: removes selected session file and prunes empty project directory
@@ -61,6 +61,9 @@ Deep clean archived coding assistant sessions from your device.
    2. GitHub Copilot
    Delete archived Copilot sessions
 
+   3. Antigravity
+   Delete archived Antigravity sessions
+
 ↑↓ Navigate  |  Enter / → Select  |  Ctrl+C / Q Quit
 ```
 
@@ -95,9 +98,11 @@ When no sessions are found for a provider, the same screen layout is shown inste
 - Deletion is permanent.
 - Claude: deletes selected `.jsonl` session file, then removes parent project dir only if empty.
 - Copilot: deletes the selected session directory recursively.
+- Antigravity: deletes the selected conversation directory recursively.
 - Always review selected entries before confirming.
 
 ## Session Sources
 
 - Claude: `~/.claude/projects/*/*.jsonl`
 - Copilot: `~/.copilot/session-state/<session-id>/`
+- Antigravity: `~/.gemini/antigravity-cli/brain/<session-id>/` and `~/.gemini/antigravity/brain/<session-id>/`
