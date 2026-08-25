@@ -104,7 +104,12 @@ def _print_help_screen() -> None:
 
 
 def _choices_height_dimension() -> Dimension:
-    """Calculates available vertical height for the choices list to fit on screen."""
+    """Calculates available vertical height for the choices list to fit on screen.
+
+    Returns:
+        A Dimension with a minimum of 1 line and a maximum sized to the
+        current terminal height, reserving space for surrounding UI chrome.
+    """
     term_height = shutil.get_terminal_size((80, 24)).lines
     # Reserve lines for banner + info (~11), provider menu prompt (~2),
     # provider header (~3), sessions prompt (~1), footer (~2)
@@ -117,7 +122,16 @@ def _create_inquirer_layout_with_footer(
     get_prompt_tokens: Callable[[], list[tuple[str, str]]],
     footer: str,
 ) -> Layout:
-    """Creates the default questionary layout with an external footer row."""
+    """Creates the default questionary layout with an external footer row.
+
+    Args:
+        control: Inquirer control rendering the choice list.
+        get_prompt_tokens: Callback returning the prompt's formatted tokens.
+        footer: Footer text shown below the choice list.
+
+    Returns:
+        The questionary layout with the footer row appended.
+    """
 
     layout = questionary_common.create_inquirer_layout(control, get_prompt_tokens)
     if not isinstance(layout.container, HSplit):
@@ -214,7 +228,16 @@ def main(
 
 
 def _pick_provider(cli_provider: str | None) -> str | None:
-    """Resolves provider from CLI option or interactive menu selection."""
+    """Resolves provider from CLI option or interactive menu selection.
+
+    Args:
+        cli_provider: Provider value passed via the `--assistant` flag, or
+            None to fall back to the interactive menu.
+
+    Returns:
+        The resolved provider key, or None when the value is invalid or the
+        user quits the interactive menu.
+    """
 
     if cli_provider:
         normalized = cli_provider.strip().lower()
@@ -323,7 +346,15 @@ def _print_provider_header(provider: str, sessions: list[SessionRecord]) -> None
 
 
 def _pick_sessions(sessions: list[SessionRecord]) -> list[SessionRecord] | str:
-    """Prompts user to choose one or more sessions for deletion."""
+    """Prompts user to choose one or more sessions for deletion.
+
+    Args:
+        sessions: Sessions available for selection.
+
+    Returns:
+        The selected sessions, an empty list when nothing was selected, or
+        `_BACK_SENTINEL` when the user navigated back.
+    """
 
     mapping: dict[str, SessionRecord] = {
         session.session_id: session for session in sessions
@@ -356,7 +387,11 @@ def _pick_sessions(sessions: list[SessionRecord]) -> list[SessionRecord] | str:
 
 
 def _print_selected_summary(sessions: list[SessionRecord]) -> None:
-    """Prints a compact summary of selected sessions before deletion."""
+    """Prints a compact summary of selected sessions before deletion.
+
+    Args:
+        sessions: Sessions chosen by the user, about to be deleted.
+    """
 
     console.print("[bold]Selected for deletion:[/bold]")
     for session in sessions:
@@ -371,7 +406,15 @@ def _print_selected_summary(sessions: list[SessionRecord]) -> None:
 def _session_choice_title(
     session: SessionRecord, index: int | None = None
 ) -> FormattedChoiceTitle:
-    """Builds a formatted multi-line card row for a session choice item."""
+    """Builds a formatted multi-line card row for a session choice item.
+
+    Args:
+        session: Session to render.
+        index: Optional 1-based position shown as a numeric prefix.
+
+    Returns:
+        A list of (style class, text) tuples for the checkbox choice row.
+    """
 
     storage_hint = _session_storage_hint(session)
     formatted_dt = session.updated_at.astimezone(timezone.utc).strftime(
@@ -395,7 +438,15 @@ def _session_choice_title(
 
 
 def _session_storage_hint(session: SessionRecord) -> str:
-    """Returns a display-friendly storage path for a session."""
+    """Returns a display-friendly storage path for a session.
+
+    Args:
+        session: Session whose storage path should be displayed.
+
+    Returns:
+        The storage path with the home directory replaced by "~" when
+        applicable, otherwise the full path unchanged.
+    """
 
     path_for_display = session.storage_path
     if session.provider == "claude":
@@ -478,7 +529,20 @@ def _checkbox_with_back(
     footer: str,
     validate: ValidateSelectionFn,
 ) -> list[str] | str | None:  # pragma: no cover
-    """Runs custom checkbox prompt with explicit back and quit controls."""
+    """Runs custom checkbox prompt with explicit back and quit controls.
+
+    Args:
+        message: Prompt text shown above the choice list.
+        choices: Selectable choices and separators to render.
+        footer: Footer text describing available key bindings.
+        validate: Callback invoked with the currently selected values on
+            submit; return True to accept, or False/a string error message
+            to reject.
+
+    Returns:
+        The selected values, `_BACK_SENTINEL` when the user pressed the
+        back key, or None when the user quit or interrupted the prompt.
+    """
 
     if not callable(validate):
         raise TypeError("validate must be callable")
@@ -594,7 +658,11 @@ def _checkbox_with_back(
 
 
 def _provider_menu_with_quit() -> str | None:  # pragma: no cover
-    """Shows provider selection menu with keyboard shortcuts for quit/select."""
+    """Shows provider selection menu with keyboard shortcuts for quit/select.
+
+    Returns:
+        The selected provider key, or None when the user quit the menu.
+    """
 
     choices: list[Choice] = [
         Choice(
@@ -679,7 +747,14 @@ def _provider_menu_with_quit() -> str | None:  # pragma: no cover
 
 
 def _human_size(size_bytes: int) -> str:
-    """Formats byte count into human-readable units."""
+    """Formats byte count into human-readable units.
+
+    Args:
+        size_bytes: Size in bytes.
+
+    Returns:
+        A human-readable string such as "1.5 KB".
+    """
 
     value = float(size_bytes)
     units = ["B", "KB", "MB", "GB", "TB"]
