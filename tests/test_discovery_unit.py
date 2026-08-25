@@ -334,6 +334,91 @@ def test_discover_antigravity_sessions_handles_empty_root(tmp_path: Path, monkey
     assert discovery._discover_antigravity_sessions() == []
 
 
+def test_find_profile_targets_matches_direct_marker(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    target = tmp_path / ".copilot" / "session-state"
+    target.mkdir(parents=True)
+
+    found = discovery._find_profile_targets(".copilot*", "session-state")
+
+    assert found == [target]
+
+
+def test_find_profile_targets_finds_profile_subdirs(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+
+    direct = tmp_path / ".copilot-profiles" / "az" / "session-state"
+    nested = tmp_path / ".copilot-profiles" / "epam" / ".copilot" / "session-state"
+    direct.mkdir(parents=True)
+    nested.mkdir(parents=True)
+
+    found = set(discovery._find_profile_targets(".copilot*", "session-state"))
+
+    assert found == {direct, nested}
+
+
+def test_find_profile_targets_dedupes_and_handles_missing_home(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+
+    assert discovery._find_profile_targets(".copilot*", "session-state") == []
+
+
+def test_read_claude_metadata_prefers_ai_title(tmp_path: Path) -> None:
+    jsonl_path = tmp_path / "s.jsonl"
+    jsonl_path.write_text(
+        '{"type":"user","cwd":"/tmp/proj","message":{"content":"raw first prompt"}}\n'
+        '{"type":"ai-title","aiTitle":"Generated Title"}\n',
+        encoding="utf-8",
+    )
+
+    metadata = discovery._read_claude_metadata(jsonl_path)
+
+    assert metadata["title"] == "Generated Title"
+    assert metadata["prompt"] == "raw first prompt"
+    assert metadata["cwd"] == "/tmp/proj"
+
+
+def test_read_claude_metadata_keeps_latest_ai_title(tmp_path: Path) -> None:
+    jsonl_path = tmp_path / "s.jsonl"
+    jsonl_path.write_text(
+        '{"type":"ai-title","aiTitle":"First Title"}\n'
+        '{"type":"ai-title","aiTitle":"Updated Title"}\n',
+        encoding="utf-8",
+    )
+
+    metadata = discovery._read_claude_metadata(jsonl_path)
+
+    assert metadata["title"] == "Updated Title"
+
+
+def test_read_copilot_first_prompt_returns_first_user_message(tmp_path: Path) -> None:
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    (session_dir / "events.jsonl").write_text(
+        '{"type":"session.start","data":{}}\n'
+        '{"type":"user.message","data":{"content":"  fix   the bug  "}}\n'
+        '{"type":"user.message","data":{"content":"second message"}}\n',
+        encoding="utf-8",
+    )
+
+    assert discovery._read_copilot_first_prompt(session_dir) == "fix the bug"
+
+
+def test_read_copilot_first_prompt_handles_missing_or_corrupt_events(
+    tmp_path: Path,
+) -> None:
+    empty_dir = tmp_path / "no-events"
+    empty_dir.mkdir()
+    assert discovery._read_copilot_first_prompt(empty_dir) is None
+
+    corrupt_dir = tmp_path / "corrupt"
+    corrupt_dir.mkdir()
+    (corrupt_dir / "events.jsonl").write_text("not json\n", encoding="utf-8")
+    assert discovery._read_copilot_first_prompt(corrupt_dir) is None
+
+
 def test_delete_session_rejects_unknown_provider(tmp_path: Path) -> None:
     p = tmp_path / "x"
     p.write_text("x", encoding="utf-8")
