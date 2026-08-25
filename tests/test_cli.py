@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from prompt_toolkit.formatted_text import to_formatted_text
 from prompt_toolkit.layout import ConditionalContainer, HSplit, Window
@@ -16,11 +16,13 @@ from sede.models import SessionRecord
 
 
 def _sample_session(provider: str = "claude") -> SessionRecord:
-    storage = (
-        Path.home() / ".claude" / "projects" / "p" / "sid.jsonl"
-        if provider == "claude"
-        else Path.home() / ".copilot" / "session-state" / "sid"
-    )
+    if provider == "claude":
+        storage = Path.home() / ".claude" / "projects" / "p" / "sid.jsonl"
+    elif provider == "copilot":
+        storage = Path.home() / ".copilot" / "session-state" / "sid"
+    else:
+        storage = Path.home() / ".gemini" / "antigravity-cli" / "brain" / "sid"
+
     return SessionRecord(
         provider=provider,
         session_id="sid",
@@ -50,9 +52,13 @@ def test_session_choice_title_contains_storage_line() -> None:
     joined = "".join(t[1] for t in tokens)
 
     assert "Sample Session" in joined
+    assert "Project:" in joined
     assert "/tmp/project" in joined
+    assert "Storage:" in joined
     assert ".copilot/session-state/sid" in joined
+    assert "Details:" in joined
     assert "1.5 KB" in joined
+    assert "─" in joined
 
 
 def test_run_provider_flow_returns_true_when_no_sessions(monkeypatch) -> None:
@@ -159,6 +165,8 @@ def test_main_with_invalid_assistant_exits_non_zero() -> None:
 def test_pick_provider_accepts_cli_values() -> None:
     assert cli._pick_provider("claude") == "claude"
     assert cli._pick_provider("  copilot ") == "copilot"
+    assert cli._pick_provider("antigravity") == "antigravity"
+    assert cli._pick_provider("  agy ") == "antigravity"
 
 
 def test_pick_provider_rejects_unknown_cli_value() -> None:
@@ -288,6 +296,32 @@ def test_create_inquirer_layout_with_footer_adds_external_footer() -> None:
     )
     choices_window = cast(Window, choices_container.content)
     assert choices_window.dont_extend_height()
+    assert choices_window.always_hide_cursor()
+    assert control.show_cursor is False
+    assert callable(choices_window.height)
+    height_fn = cast(Any, choices_window.height)
+    dim = height_fn()
+    assert dim.min == 1
+    assert dim.max >= 4
+    assert choices_window.scroll_offsets.bottom == 4
+
+
+def test_choices_height_dimension_respects_terminal_size(monkeypatch) -> None:
+    import os
+
+    monkeypatch.setattr(
+        cli.shutil, "get_terminal_size", lambda fallback: os.terminal_size((80, 30))
+    )
+    dim = cli._choices_height_dimension()
+    assert dim.min == 1
+    assert dim.max == 11
+
+    # When terminal is very small, minimum height of 4 is guaranteed
+    monkeypatch.setattr(
+        cli.shutil, "get_terminal_size", lambda fallback: os.terminal_size((80, 10))
+    )
+    dim_small = cli._choices_height_dimension()
+    assert dim_small.max == 4
 
 
 def test_run_provider_flow_collects_failures(monkeypatch) -> None:
