@@ -50,7 +50,7 @@ Main screen:
  \__ \  __/ (_| |  __/
  |___/\___|\__,_|\___|
 
-Session Deleter v0.1.4
+Session Deleter
 https://github.com/ilypopv/sede/
 Deep clean archived coding assistant sessions from your device.
 
@@ -74,10 +74,10 @@ Session selection screen:
  1 session(s) loaded. Total size: 1.5 MB.
 
  Choose sessions to delete
- » ○ Session title...
-   /Users/you/project-path
-   ~/.claude/projects/-Users-you-project/
-   1.5 MB | 2026-07-03 09:44 UTC
+ » ○ 1. Session title...
+     Project:  /Users/you/project-path
+     Storage:  ~/.claude/projects/-Users-you-project/
+     Details:  1.5 MB  •  2026-07-03 09:44 UTC
 
 ↑↓ Navigate  |  ← Back  |  Space Select  |  A Toggle All  |  Enter Delete  |  Ctrl+C / Q Quit
 ```
