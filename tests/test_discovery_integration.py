@@ -48,6 +48,99 @@ def test_discover_claude_sessions_reads_metadata_and_sorts(
     assert sessions[1].project_path == "/Users/me/project/b"
 
 
+def test_discover_claude_sessions_uses_ai_title_and_multiple_profile_roots(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: home))
+
+    default_root = home / ".claude" / "projects" / "-Users-me-project-a"
+    work_root = home / ".claude-work" / "projects" / "-Users-me-project-b"
+    default_root.mkdir(parents=True)
+    work_root.mkdir(parents=True)
+
+    titled = default_root / "11111111-1111-1111-1111-111111111111.jsonl"
+    untitled = work_root / "22222222-2222-2222-2222-222222222222.jsonl"
+
+    titled.write_text(
+        '{"type":"user","cwd":"/Users/me/project-a","message":{"content":"raw prompt"}}\n'
+        '{"type":"ai-title","aiTitle":"Fix the parser bug"}\n',
+        encoding="utf-8",
+    )
+    untitled.write_text(
+        '{"type":"user","cwd":"/Users/me/project-b","message":{"content":"No title yet"}}\n',
+        encoding="utf-8",
+    )
+
+    _set_mtime(titled, datetime(2026, 7, 4, 10, 0, tzinfo=timezone.utc))
+    _set_mtime(untitled, datetime(2026, 7, 4, 9, 0, tzinfo=timezone.utc))
+
+    sessions = discovery.discover_sessions("claude")
+
+    assert len(sessions) == 2
+    assert sessions[0].title == "Fix the parser bug"
+    assert sessions[1].title == "No title yet"
+
+
+def test_discover_copilot_sessions_finds_profile_dirs_and_falls_back_to_first_prompt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: home))
+
+    profile_root = home / ".copilot-profiles" / "az" / "session-state"
+    nested_root = home / ".copilot-profiles" / "epam" / ".copilot" / "session-state"
+
+    named_session = profile_root / "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    unnamed_session = nested_root / "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    named_session.mkdir(parents=True)
+    unnamed_session.mkdir(parents=True)
+
+    (named_session / "workspace.yaml").write_text(
+        "id: a\ncwd: /tmp/app-a\nname: Session A\nupdated_at: 2026-07-04T12:00:00Z\n",
+        encoding="utf-8",
+    )
+    (unnamed_session / "workspace.yaml").write_text(
+        "id: b\ncwd: /tmp/app-b\nupdated_at: 2026-07-04T11:00:00Z\n",
+        encoding="utf-8",
+    )
+    (unnamed_session / "events.jsonl").write_text(
+        '{"type":"user.message","data":{"content":"Investigate profile bug"}}\n',
+        encoding="utf-8",
+    )
+
+    sessions = discovery.discover_sessions("copilot")
+
+    assert len(sessions) == 2
+    assert sessions[0].title == "Session A"
+    assert sessions[0].project_path == "/tmp/app-a"
+    assert sessions[1].title == "Investigate profile bug"
+    assert sessions[1].project_path == "/tmp/app-b"
+
+
+def test_discover_antigravity_sessions_finds_alternate_home_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: home))
+
+    brain = home / ".gemini-work" / "antigravity" / "brain"
+    session_dir = brain / "conv-alt"
+    logs_dir = session_dir / ".system_generated" / "logs"
+    logs_dir.mkdir(parents=True)
+    (logs_dir / "transcript.jsonl").write_text(
+        '{"type":"USER_INPUT","content":"Alternate home prompt","cwd":"/path/alt"}\n',
+        encoding="utf-8",
+    )
+
+    sessions = discovery.discover_sessions("antigravity")
+
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "conv-alt"
+    assert sessions[0].title == "Alternate home prompt"
+    assert sessions[0].project_path == "/path/alt"
+
+
 def test_discover_copilot_sessions_reads_workspace_and_falls_back_to_mtime(
     tmp_path: Path, monkeypatch
 ) -> None:
