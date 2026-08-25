@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import shutil
+from collections.abc import Sequence
 from datetime import timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Callable, Union, cast
 
 import questionary
 import typer
@@ -12,8 +14,10 @@ from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import ConditionalContainer, HSplit, Layout, Window
+from prompt_toolkit.layout.containers import ScrollOffsets
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.dimension import LayoutDimension
+from prompt_toolkit.layout.dimension import Dimension, LayoutDimension
+from prompt_toolkit.styles import Style
 from questionary import Choice
 from questionary.constants import INVALID_INPUT
 from questionary.prompts import common as questionary_common
@@ -32,13 +36,33 @@ app = typer.Typer(
 )
 console = Console()
 
-ValidateSelectionFn = Callable[[List[str]], Union[bool, str]]
-FormattedChoiceTitle = List[Tuple[str, str]]
+ValidateSelectionFn = Callable[[list[str]], Union[bool, str]]
+FormattedChoiceTitle = list[tuple[str, str]]
 
 _PROVIDER_LABELS = {
     "claude": "Claude Code",
     "copilot": "GitHub Copilot",
+    "antigravity": "Antigravity",
 }
+
+_TUI_STYLE = Style.from_dict(
+    {
+        "question": "bold",
+        "pointer": "fg:ansicyan bold",
+        "selected": "fg:ansigreen bold",
+        "highlighted": "bold",
+        "separator": "fg:ansigray",
+        "instruction": "fg:ansigray",
+        "text": "",
+        "session-title": "bold",
+        "session-label": "fg:ansigray",
+        "session-path": "fg:ansicyan",
+        "session-storage": "fg:ansigray",
+        "session-meta": "",
+        "session-divider": "fg:ansigray",
+        "validation-toolbar": "fg:ansired bold",
+    }
+)
 
 _BACK_SENTINEL = "__sede_back__"
 
@@ -57,7 +81,7 @@ _HELP_COMMANDS = [
 ]
 
 _HELP_OPTIONS = [
-    ("--assistant, -a TEXT", "Assistant to manage: claude or copilot"),
+    ("--assistant, -a TEXT", "Assistant to manage: claude, copilot, or antigravity"),
     ("--yes, -y", "Skip confirmation prompt before deletion"),
 ]
 
@@ -79,17 +103,41 @@ def _print_help_screen() -> None:
         console.print(f"  [cyan]{opt:<{_HELP_COL_WIDTH}}[/cyan]{desc}")
 
 
+def _choices_height_dimension() -> Dimension:
+    """Calculates available vertical height for the choices list to fit on screen.
+
+    Returns:
+        A Dimension with a minimum of 1 line and a maximum sized to the
+        current terminal height, reserving space for surrounding UI chrome.
+    """
+    term_height = shutil.get_terminal_size((80, 24)).lines
+    # Reserve lines for banner + info (~11), provider menu prompt (~2),
+    # provider header (~3), sessions prompt (~1), footer (~2)
+    max_height = max(4, term_height - 19)
+    return Dimension(min=1, max=max_height)
+
+
 def _create_inquirer_layout_with_footer(
     control: InquirerControl,
-    get_prompt_tokens: Callable[[], List[Tuple[str, str]]],
+    get_prompt_tokens: Callable[[], list[tuple[str, str]]],
     footer: str,
 ) -> Layout:
-    """Creates the default questionary layout with an external footer row."""
+    """Creates the default questionary layout with an external footer row.
+
+    Args:
+        control: Inquirer control rendering the choice list.
+        get_prompt_tokens: Callback returning the prompt's formatted tokens.
+        footer: Footer text shown below the choice list.
+
+    Returns:
+        The questionary layout with the footer row appended.
+    """
 
     layout = questionary_common.create_inquirer_layout(control, get_prompt_tokens)
     if not isinstance(layout.container, HSplit):
         return layout
 
+    control.show_cursor = False
     for child in layout.container.children:
         if (
             isinstance(child, ConditionalContainer)
@@ -97,6 +145,9 @@ def _create_inquirer_layout_with_footer(
             and child.content.content is control
         ):
             child.content.dont_extend_height = Always()
+            child.content.always_hide_cursor = Always()
+            child.content.height = _choices_height_dimension
+            child.content.scroll_offsets = ScrollOffsets(top=0, bottom=4)
             break
 
     footer_control = FormattedTextControl(
@@ -116,11 +167,11 @@ def _create_inquirer_layout_with_footer(
 
 @app.command()
 def main(
-    assistant: Optional[str] = typer.Option(
+    assistant: str | None = typer.Option(
         None,
         "--assistant",
         "-a",
-        help="Assistant to manage: claude or copilot",
+        help="Assistant to manage: claude, copilot, or antigravity",
     ),
     yes: bool = typer.Option(
         False,
@@ -176,14 +227,27 @@ def main(
             return
 
 
-def _pick_provider(cli_provider: Optional[str]) -> Optional[str]:
-    """Resolves provider from CLI option or interactive menu selection."""
+def _pick_provider(cli_provider: str | None) -> str | None:
+    """Resolves provider from CLI option or interactive menu selection.
+
+    Args:
+        cli_provider: Provider value passed via the `--assistant` flag, or
+            None to fall back to the interactive menu.
+
+    Returns:
+        The resolved provider key, or None when the value is invalid or the
+        user quits the interactive menu.
+    """
 
     if cli_provider:
         normalized = cli_provider.strip().lower()
+        if normalized == "agy":
+            normalized = "antigravity"
         if normalized in _PROVIDER_LABELS:
             return normalized
-        console.print("[red]Unknown assistant. Use claude or copilot.[/red]")
+        console.print(
+            "[red]Unknown assistant. Use claude, copilot, or antigravity.[/red]"
+        )
         return None
 
     console.clear()
@@ -233,7 +297,7 @@ def _run_provider_flow(provider: str, yes: bool) -> bool:
         console.print("[yellow]Nothing selected. Exit.[/yellow]")
         return False
 
-    chosen_sessions = cast(List[SessionRecord], selected)
+    chosen_sessions = cast(list[SessionRecord], selected)
     _print_selected_summary(chosen_sessions)
 
     if not yes:
@@ -246,7 +310,7 @@ def _run_provider_flow(provider: str, yes: bool) -> bool:
             return False
 
     deleted = 0
-    failed: List[str] = []
+    failed: list[str] = []
     for session in chosen_sessions:
         try:
             delete_session(session)
@@ -264,7 +328,7 @@ def _run_provider_flow(provider: str, yes: bool) -> bool:
     return False
 
 
-def _print_provider_header(provider: str, sessions: List[SessionRecord]) -> None:
+def _print_provider_header(provider: str, sessions: list[SessionRecord]) -> None:
     """Renders the secondary screen header shared by empty and loaded states.
 
     Args:
@@ -281,19 +345,27 @@ def _print_provider_header(provider: str, sessions: List[SessionRecord]) -> None
     console.print()
 
 
-def _pick_sessions(sessions: List[SessionRecord]) -> Union[List[SessionRecord], str]:
-    """Prompts user to choose one or more sessions for deletion."""
+def _pick_sessions(sessions: list[SessionRecord]) -> list[SessionRecord] | str:
+    """Prompts user to choose one or more sessions for deletion.
 
-    mapping: Dict[str, SessionRecord] = {
+    Args:
+        sessions: Sessions available for selection.
+
+    Returns:
+        The selected sessions, an empty list when nothing was selected, or
+        `_BACK_SENTINEL` when the user navigated back.
+    """
+
+    mapping: dict[str, SessionRecord] = {
         session.session_id: session for session in sessions
     }
 
-    choices: List[Union[Choice, Separator]] = [
+    choices: list[Choice | Separator] = [
         Choice(
-            title=_session_choice_title(session),
+            title=_session_choice_title(session, index=idx),
             value=session.session_id,
         )
-        for session in sessions
+        for idx, session in enumerate(sessions, 1)
     ]
 
     selected_ids = _checkbox_with_back(
@@ -314,8 +386,12 @@ def _pick_sessions(sessions: List[SessionRecord]) -> Union[List[SessionRecord], 
     return [mapping[item] for item in selected_ids if item in mapping]
 
 
-def _print_selected_summary(sessions: List[SessionRecord]) -> None:
-    """Prints a compact summary of selected sessions before deletion."""
+def _print_selected_summary(sessions: list[SessionRecord]) -> None:
+    """Prints a compact summary of selected sessions before deletion.
+
+    Args:
+        sessions: Sessions chosen by the user, about to be deleted.
+    """
 
     console.print("[bold]Selected for deletion:[/bold]")
     for session in sessions:
@@ -327,24 +403,50 @@ def _print_selected_summary(sessions: List[SessionRecord]) -> None:
         )
 
 
-def _session_choice_title(session: SessionRecord) -> FormattedChoiceTitle:
-    """Builds a formatted multi-line title row for a session choice item."""
+def _session_choice_title(
+    session: SessionRecord, index: int | None = None
+) -> FormattedChoiceTitle:
+    """Builds a formatted multi-line card row for a session choice item.
+
+    Args:
+        session: Session to render.
+        index: Optional 1-based position shown as a numeric prefix.
+
+    Returns:
+        A list of (style class, text) tuples for the checkbox choice row.
+    """
 
     storage_hint = _session_storage_hint(session)
+    formatted_dt = session.updated_at.astimezone(timezone.utc).strftime(
+        "%Y-%m-%d %H:%M UTC"
+    )
+    size_str = _human_size(session.size_bytes)
+    indent = "     "
+    divider = "─" * 56
+    prefix = f"{index}. " if index is not None else ""
+
     return [
-        ("", f"{session.title}\n"),
-        ("", f"  {session.project_path}\n"),
-        ("fg:#7a7a7a", f"  {storage_hint}\n"),
-        (
-            "",
-            f"  {_human_size(session.size_bytes)} | "
-            f"{session.updated_at.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-        ),
+        ("class:session-title", f"{prefix}{session.title}\n"),
+        ("class:session-label", f"{indent}Project:  "),
+        ("class:session-path", f"{session.project_path}\n"),
+        ("class:session-label", f"{indent}Storage:  "),
+        ("class:session-storage", f"{storage_hint}\n"),
+        ("class:session-label", f"{indent}Details:  "),
+        ("class:session-meta", f"{size_str}  •  {formatted_dt}\n"),
+        ("class:session-divider", f"{indent}{divider}"),
     ]
 
 
 def _session_storage_hint(session: SessionRecord) -> str:
-    """Returns a display-friendly storage path for a session."""
+    """Returns a display-friendly storage path for a session.
+
+    Args:
+        session: Session whose storage path should be displayed.
+
+    Returns:
+        The storage path with the home directory replaced by "~" when
+        applicable, otherwise the full path unchanged.
+    """
 
     path_for_display = session.storage_path
     if session.provider == "claude":
@@ -392,9 +494,9 @@ def _wait_for_any_key(message: str) -> None:  # pragma: no cover
 
 
 def _compute_toggled_select_all(
-    choices: Sequence[Union[Choice, Separator]],
-    selected_options: List[Any],
-) -> List[Any]:
+    choices: Sequence[Choice | Separator],
+    selected_options: list[Any],
+) -> list[Any]:
     """Computes the next selection state for the "select/deselect all" key.
 
     Selects every selectable choice when not all of them are currently
@@ -423,27 +525,41 @@ def _compute_toggled_select_all(
 
 def _checkbox_with_back(
     message: str,
-    choices: Sequence[Union[Choice, Separator]],
+    choices: Sequence[Choice | Separator],
     footer: str,
     validate: ValidateSelectionFn,
-) -> Union[List[str], str, None]:  # pragma: no cover
-    """Runs custom checkbox prompt with explicit back and quit controls."""
+) -> list[str] | str | None:  # pragma: no cover
+    """Runs custom checkbox prompt with explicit back and quit controls.
+
+    Args:
+        message: Prompt text shown above the choice list.
+        choices: Selectable choices and separators to render.
+        footer: Footer text describing available key bindings.
+        validate: Callback invoked with the currently selected values on
+            submit; return True to accept, or False/a string error message
+            to reject.
+
+    Returns:
+        The selected values, `_BACK_SENTINEL` when the user pressed the
+        back key, or None when the user quit or interrupted the prompt.
+    """
 
     if not callable(validate):
-        raise ValueError("validate must be callable")
+        raise TypeError("validate must be callable")
 
     control = InquirerControl(choices)
+    control.show_cursor = False
 
-    def get_prompt_tokens() -> List[Tuple[str, str]]:
+    def get_prompt_tokens() -> list[tuple[str, str]]:
         if control.is_answered:
             return [("class:answer", "done")]
         return [("class:question", f" {message} ")]
 
-    def get_selected_values() -> List[str]:
+    def get_selected_values() -> list[str]:
         selected_values = [choice.value for choice in control.get_selected_values()]
         return [value for value in selected_values if isinstance(value, str)]
 
-    def perform_validation(selected_values: List[str]) -> bool:
+    def perform_validation(selected_values: list[str]) -> bool:
         verdict = validate(selected_values)
         valid = verdict is True
 
@@ -532,7 +648,7 @@ def _checkbox_with_back(
     question = Application(
         layout=Layout(layout.container) if isinstance(layout, Layout) else layout,
         key_bindings=bindings,
-        style=None,
+        style=_TUI_STYLE,
     )
 
     try:
@@ -541,23 +657,32 @@ def _checkbox_with_back(
         return None
 
 
-def _provider_menu_with_quit() -> Optional[str]:  # pragma: no cover
-    """Shows provider selection menu with keyboard shortcuts for quit/select."""
+def _provider_menu_with_quit() -> str | None:  # pragma: no cover
+    """Shows provider selection menu with keyboard shortcuts for quit/select.
 
-    choices: List[Choice] = [
+    Returns:
+        The selected provider key, or None when the user quit the menu.
+    """
+
+    choices: list[Choice] = [
         Choice(
             "1. Claude Code\n   Delete archived Claude Code sessions\n",
             value="claude",
         ),
         Choice(
-            "2. GitHub Copilot\n   Delete archived Copilot sessions",
+            "2. GitHub Copilot\n   Delete archived Copilot sessions\n",
             value="copilot",
+        ),
+        Choice(
+            "3. Antigravity\n   Delete archived Antigravity sessions",
+            value="antigravity",
         ),
     ]
 
     control = InquirerControl(choices, pointer="➤")
+    control.show_cursor = False
 
-    def get_prompt_tokens() -> List[Tuple[str, str]]:
+    def get_prompt_tokens() -> list[tuple[str, str]]:
         return [("class:question", " Choose coding assistant ")]
 
     layout = _create_inquirer_layout_with_footer(
@@ -615,14 +740,21 @@ def _provider_menu_with_quit() -> Optional[str]:  # pragma: no cover
     question = Application(
         layout=Layout(layout.container) if isinstance(layout, Layout) else layout,
         key_bindings=bindings,
-        style=None,
+        style=_TUI_STYLE,
     )
 
     return question.run()
 
 
 def _human_size(size_bytes: int) -> str:
-    """Formats byte count into human-readable units."""
+    """Formats byte count into human-readable units.
+
+    Args:
+        size_bytes: Size in bytes.
+
+    Returns:
+        A human-readable string such as "1.5 KB".
+    """
 
     value = float(size_bytes)
     units = ["B", "KB", "MB", "GB", "TB"]

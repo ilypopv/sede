@@ -12,7 +12,7 @@ _Delete archived coding assistant sessions from terminal, fast and safely._
 ## Features
 
 - Interactive TUI flow for provider selection and session deletion
-- Supports `Claude Code` and `GitHub Copilot`
+- Supports `Claude Code`, `GitHub Copilot`, and `Antigravity`
 - Multi-select deletion with confirmation
 - Storage-aware list: title, project path, storage path, size, updated-at
 - Safe Claude cleanup: removes selected session file and prunes empty project directory
@@ -50,7 +50,7 @@ Main screen:
  \__ \  __/ (_| |  __/
  |___/\___|\__,_|\___|
 
-Session Deleter v0.1.4
+Session Deleter
 https://github.com/ilypopv/sede/
 Deep clean archived coding assistant sessions from your device.
 
@@ -60,6 +60,9 @@ Deep clean archived coding assistant sessions from your device.
 
    2. GitHub Copilot
    Delete archived Copilot sessions
+
+   3. Antigravity
+   Delete archived Antigravity sessions
 
 ↑↓ Navigate  |  Enter / → Select  |  Ctrl+C / Q Quit
 ```
@@ -71,10 +74,10 @@ Session selection screen:
  1 session(s) loaded. Total size: 1.5 MB.
 
  Choose sessions to delete
- » ○ Session title...
-   /Users/you/project-path
-   ~/.claude/projects/-Users-you-project/
-   1.5 MB | 2026-07-03 09:44 UTC
+ » ○ 1. Session title...
+     Project:  /Users/you/project-path
+     Storage:  ~/.claude/projects/-Users-you-project/
+     Details:  1.5 MB  •  2026-07-03 09:44 UTC
 
 ↑↓ Navigate  |  ← Back  |  Space Select  |  A Toggle All  |  Enter Delete  |  Ctrl+C / Q Quit
 ```
@@ -95,9 +98,11 @@ When no sessions are found for a provider, the same screen layout is shown inste
 - Deletion is permanent.
 - Claude: deletes selected `.jsonl` session file, then removes parent project dir only if empty.
 - Copilot: deletes the selected session directory recursively.
+- Antigravity: deletes the selected conversation directory recursively.
 - Always review selected entries before confirming.
 
 ## Session Sources
 
 - Claude: `~/.claude/projects/*/*.jsonl`
 - Copilot: `~/.copilot/session-state/<session-id>/`
+- Antigravity: `~/.gemini/antigravity-cli/brain/<session-id>/` and `~/.gemini/antigravity/brain/<session-id>/`
