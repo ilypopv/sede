@@ -36,6 +36,7 @@ def test_parse_iso_dt_variants() -> None:
 def test_shorten_behaviour() -> None:
     assert discovery._shorten("abc", 5) == "abc"
     assert discovery._shorten("abcdef", 4) == "abc..."
+    assert discovery._shorten("line1\n  line2\nline3", 50) == "line1 line2 line3"
 
 
 def test_read_simple_yaml_parses_basic_pairs(tmp_path: Path) -> None:
@@ -184,6 +185,153 @@ def test_delete_session_removes_copilot_directory(tmp_path: Path) -> None:
     discovery.delete_session(record)
 
     assert not session_dir.exists()
+
+
+def test_delete_antigravity_session_cleans_db_and_summaries(tmp_path: Path) -> None:
+    import sqlite3
+
+    app_dir = tmp_path / ".gemini" / "antigravity-cli"
+    brain_dir = app_dir / "brain"
+    conv_dir = app_dir / "conversations"
+    session_dir = brain_dir / "session-123"
+    session_dir.mkdir(parents=True)
+    conv_dir.mkdir(parents=True)
+
+    db_file = conv_dir / "session-123.db"
+    db_wal = conv_dir / "session-123.db-wal"
+    db_file.write_text("data", encoding="utf-8")
+    db_wal.write_text("wal", encoding="utf-8")
+
+    summaries_db = app_dir / "conversation_summaries.db"
+    conn = sqlite3.connect(str(summaries_db))
+    conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT)")
+    conn.execute("INSERT INTO conversation_summaries VALUES ('session-123', 'My Session')")
+    conn.commit()
+    conn.close()
+
+    discovery._delete_antigravity_session(session_dir, "session-123")
+
+    assert not session_dir.exists()
+    assert not db_file.exists()
+    assert not db_wal.exists()
+
+    conn = sqlite3.connect(str(summaries_db))
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM conversation_summaries WHERE conversation_id = 'session-123'")
+    assert cursor.fetchone() is None
+    conn.close()
+
+
+def test_read_antigravity_summary_db_parses_row(tmp_path: Path) -> None:
+    import sqlite3
+
+    app_dir = tmp_path
+    summaries_db = app_dir / "conversation_summaries.db"
+    conn = sqlite3.connect(str(summaries_db))
+    conn.execute(
+        "CREATE TABLE conversation_summaries "
+        "(conversation_id TEXT, title TEXT, preview TEXT, workspace_uris TEXT, last_modified_time TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES "
+        "('s-1', 'Old Title', 'Fixing Bug', '[\"file:///workspace/project\"]', '2026-08-25T16:00:00Z')"
+    )
+    conn.commit()
+    conn.close()
+
+    meta = discovery._read_antigravity_summary_db(app_dir, "s-1")
+    assert meta["title"] == "Fixing Bug"
+    assert meta["cwd"] == "/workspace/project"
+    assert meta["updated_at"] is not None
+
+
+def test_delete_session_calls_antigravity_deleter(tmp_path: Path) -> None:
+    session_dir = tmp_path / "antigravity-session"
+    session_dir.mkdir()
+    record = SessionRecord(
+        provider="antigravity",
+        session_id="ag-del",
+        title="Delete me",
+        project_path="/tmp",
+        size_bytes=10,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=session_dir,
+    )
+    discovery.delete_session(record)
+    assert not session_dir.exists()
+
+
+def test_read_antigravity_summary_db_variants(tmp_path: Path) -> None:
+    import sqlite3
+
+    app_dir = tmp_path
+    summaries_db = app_dir / "conversation_summaries.db"
+    conn = sqlite3.connect(str(summaries_db))
+    conn.execute(
+        "CREATE TABLE conversation_summaries "
+        "(conversation_id TEXT, title TEXT, preview TEXT, workspace_uris TEXT, last_modified_time TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES "
+        "('s-raw', 'Title Only', '', '[\"/workspace/raw\"]', '2026-08-25T16:00:00Z'), "
+        "('s-bad', 'Bad JSON', '', 'not-json', NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    meta_raw = discovery._read_antigravity_summary_db(app_dir, "s-raw")
+    assert meta_raw["title"] == "Title Only"
+    assert meta_raw["cwd"] == "/workspace/raw"
+
+    meta_bad = discovery._read_antigravity_summary_db(app_dir, "s-bad")
+    assert meta_bad["title"] == "Bad JSON"
+    assert "cwd" not in meta_bad
+
+
+def test_read_antigravity_summary_db_missing_file(tmp_path: Path) -> None:
+    meta = discovery._read_antigravity_summary_db(tmp_path, "missing")
+    assert meta == {}
+
+
+def test_read_antigravity_metadata_handles_missing_file(tmp_path: Path) -> None:
+    empty_dir = tmp_path / "empty-session"
+    empty_dir.mkdir()
+    metadata = discovery._read_antigravity_metadata(empty_dir)
+    assert metadata == {}
+
+
+def test_read_antigravity_metadata_handles_corrupted_jsonl(tmp_path: Path) -> None:
+    session_dir = tmp_path / "corrupt-session"
+    logs_dir = session_dir / ".system_generated" / "logs"
+    logs_dir.mkdir(parents=True)
+    transcript = logs_dir / "transcript.jsonl"
+    transcript.write_text("not json\n\n", encoding="utf-8")
+
+    metadata = discovery._read_antigravity_metadata(session_dir)
+    assert "updated_at" in metadata
+    assert "prompt" not in metadata
+    assert "cwd" not in metadata
+
+
+def test_read_antigravity_metadata_extracts_tool_calls_cwd(tmp_path: Path) -> None:
+    session_dir = tmp_path / "tool-cwd-session"
+    logs_dir = session_dir / ".system_generated" / "logs"
+    logs_dir.mkdir(parents=True)
+    transcript = logs_dir / "transcript.jsonl"
+    transcript.write_text(
+        '{"type":"PLANNER_RESPONSE","tool_calls":[{"arguments":{"Cwd":"/workspace/my-app"}}]}\n'
+        '{"type":"USER_INPUT","content":"Build feature"}\n',
+        encoding="utf-8",
+    )
+
+    metadata = discovery._read_antigravity_metadata(session_dir)
+    assert metadata.get("cwd") == "/workspace/my-app"
+    assert metadata.get("prompt") == "Build feature"
+
+
+def test_discover_antigravity_sessions_handles_empty_root(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    assert discovery._discover_antigravity_sessions() == []
 
 
 def test_delete_session_rejects_unknown_provider(tmp_path: Path) -> None:
