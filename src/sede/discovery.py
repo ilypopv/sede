@@ -9,6 +9,76 @@ from typing import Any
 
 from .models import SessionRecord
 
+_PROFILE_SCAN_DEPTH = 3
+
+
+def _find_profile_targets(marker_glob: str, relative_target: str) -> list[Path]:
+    """Finds every `relative_target` dir reachable from home through dirs
+    matching `marker_glob`, including provider "profile" setups that behave
+    like an alternate home directory (e.g. a ``HOME``-overriding launcher
+    script), such as ``~/.copilot-profiles/<name>/session-state`` or
+    ``~/.copilot-profiles/<name>/.copilot/session-state``.
+
+    Args:
+        marker_glob: Glob for provider-owned dot-directories directly under
+            home, e.g. ".copilot*", ".claude*", or ".gemini*". Using a glob
+            instead of an exact name catches sibling directories such as
+            ``.copilot-profiles`` alongside ``.copilot``.
+        relative_target: Path, relative to a marker or profile directory,
+            where session data is expected to live, e.g. "session-state",
+            "projects", or "antigravity-cli/brain".
+
+    Returns:
+        Deduplicated list of existing target directories.
+    """
+
+    found: list[Path] = []
+    seen_targets: set[Path] = set()
+    seen_markers: set[Path] = set()
+
+    def add(directory: Path) -> None:
+        target = directory / relative_target
+        if target.is_dir() and target not in seen_targets:
+            seen_targets.add(target)
+            found.append(target)
+
+    def scan(base: Path, depth: int) -> None:
+        if depth <= 0:
+            return
+        try:
+            marker_dirs = sorted(base.glob(marker_glob))
+        except OSError:
+            return
+
+        for marker_dir in marker_dirs:
+            if not marker_dir.is_dir():
+                continue
+            try:
+                resolved = marker_dir.resolve()
+            except OSError:
+                resolved = marker_dir
+            if resolved in seen_markers:
+                continue
+            seen_markers.add(resolved)
+
+            add(marker_dir)
+
+            try:
+                profile_dirs = [
+                    entry
+                    for entry in sorted(marker_dir.iterdir())
+                    if entry.is_dir() and not entry.name.startswith(".")
+                ]
+            except OSError:
+                profile_dirs = []
+
+            for profile_dir in profile_dirs:
+                add(profile_dir)
+                scan(profile_dir, depth - 1)
+
+    scan(Path.home(), _PROFILE_SCAN_DEPTH)
+    return found
+
 
 def discover_sessions(provider: str) -> list[SessionRecord]:
     """Discovers stored sessions for the requested assistant provider.
@@ -75,7 +145,12 @@ def _delete_claude_session_file(session_file: Path) -> None:
 
 
 def _delete_antigravity_session(session_path: Path, session_id: str) -> None:
-    """Deletes an Antigravity session from brain, conversations db, and summaries."""
+    """Deletes an Antigravity session from brain, conversations db, and summaries.
+
+    Args:
+        session_path: Path to the session's directory under a brain root.
+        session_id: Conversation identifier used to key the SQLite rows.
+    """
 
     if session_path.is_dir():
         shutil.rmtree(session_path)
@@ -107,96 +182,123 @@ def _delete_antigravity_session(session_path: Path, session_id: str) -> None:
 
 
 def _discover_claude_sessions() -> list[SessionRecord]:
-    """Discovers Claude sessions from ~/.claude/projects."""
+    """Discovers Claude sessions from every ~/.claude*/projects directory.
 
-    root = Path.home() / ".claude" / "projects"
-    if not root.exists():
-        return []
+    Covers alternate home overrides such as ~/.claude-work/projects.
+
+    Returns:
+        Discovered Claude sessions sorted by last update time, newest first.
+    """
 
     sessions: list[SessionRecord] = []
-    for jsonl_path in root.glob("*/*.jsonl"):
-        if not jsonl_path.is_file():
-            continue
+    seen_paths: set[Path] = set()
 
-        metadata = _read_claude_metadata(jsonl_path)
-        stat = jsonl_path.stat()
-        project_path = metadata.get("cwd") or _decode_claude_project_path(
-            jsonl_path.parent.name
-        )
-        title = metadata.get("title") or metadata.get("prompt") or jsonl_path.stem
+    for root in _find_profile_targets(".claude*", "projects"):
+        for jsonl_path in sorted(root.glob("*/*.jsonl")):
+            if not jsonl_path.is_file():
+                continue
+            try:
+                resolved = jsonl_path.resolve()
+            except OSError:
+                resolved = jsonl_path
+            if resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
 
-        sessions.append(
-            SessionRecord(
-                provider="claude",
-                session_id=jsonl_path.stem,
-                title=_shorten(title, 70),
-                project_path=project_path,
-                size_bytes=stat.st_size,
-                updated_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-                storage_path=jsonl_path,
+            metadata = _read_claude_metadata(jsonl_path)
+            stat = jsonl_path.stat()
+            project_path = metadata.get("cwd") or _decode_claude_project_path(
+                jsonl_path.parent.name
             )
-        )
+            title = metadata.get("title") or metadata.get("prompt") or jsonl_path.stem
+
+            sessions.append(
+                SessionRecord(
+                    provider="claude",
+                    session_id=jsonl_path.stem,
+                    title=_shorten(title, 70),
+                    project_path=project_path,
+                    size_bytes=stat.st_size,
+                    updated_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                    storage_path=jsonl_path,
+                )
+            )
 
     return sorted(sessions, key=lambda s: s.updated_at, reverse=True)
 
 
 def _discover_copilot_sessions() -> list[SessionRecord]:
-    """Discovers Copilot sessions from ~/.copilot/session-state."""
+    """Discovers Copilot sessions from every ~/.copilot*/session-state directory.
 
-    root = Path.home() / ".copilot" / "session-state"
-    if not root.exists():
-        return []
+    Covers per-profile setups such as ~/.copilot-profiles/<name>/session-state
+    or ~/.copilot-profiles/<name>/.copilot/session-state.
+
+    Returns:
+        Discovered Copilot sessions sorted by last update time, newest first.
+    """
 
     sessions: list[SessionRecord] = []
-    for session_dir in root.iterdir():
-        if not session_dir.is_dir():
-            continue
+    seen_ids: set[str] = set()
 
-        workspace_file = session_dir / "workspace.yaml"
-        metadata = _read_simple_yaml(workspace_file) if workspace_file.exists() else {}
+    for root in _find_profile_targets(".copilot*", "session-state"):
+        for session_dir in sorted(root.iterdir()):
+            if not session_dir.is_dir() or session_dir.name in seen_ids:
+                continue
 
-        updated_at = _parse_iso_dt(metadata.get("updated_at"))
-        if updated_at is None:
-            updated_at = datetime.fromtimestamp(
-                session_dir.stat().st_mtime, tz=timezone.utc
+            workspace_file = session_dir / "workspace.yaml"
+            metadata = (
+                _read_simple_yaml(workspace_file) if workspace_file.exists() else {}
             )
 
-        title = metadata.get("name") or session_dir.name
-        project_path = metadata.get("cwd") or "Unknown project"
+            updated_at = _parse_iso_dt(metadata.get("updated_at"))
+            if updated_at is None:
+                updated_at = datetime.fromtimestamp(
+                    session_dir.stat().st_mtime, tz=timezone.utc
+                )
 
-        sessions.append(
-            SessionRecord(
-                provider="copilot",
-                session_id=session_dir.name,
-                title=_shorten(title, 70),
-                project_path=project_path,
-                size_bytes=_directory_size_bytes(session_dir),
-                updated_at=updated_at,
-                storage_path=session_dir,
+            title = (
+                metadata.get("name")
+                or _read_copilot_first_prompt(session_dir)
+                or session_dir.name
             )
-        )
+            project_path = metadata.get("cwd") or "Unknown project"
+
+            sessions.append(
+                SessionRecord(
+                    provider="copilot",
+                    session_id=session_dir.name,
+                    title=_shorten(title, 70),
+                    project_path=project_path,
+                    size_bytes=_directory_size_bytes(session_dir),
+                    updated_at=updated_at,
+                    storage_path=session_dir,
+                )
+            )
+            seen_ids.add(session_dir.name)
 
     return sorted(sessions, key=lambda s: s.updated_at, reverse=True)
 
 
 def _discover_antigravity_sessions() -> list[SessionRecord]:
-    """Discovers Antigravity sessions from ~/.gemini/antigravity-cli/brain and ~/.gemini/antigravity/brain."""
+    """Discovers Antigravity sessions from every ~/.gemini*/antigravity(-cli)/brain directory.
 
-    roots = [
-        Path.home() / ".gemini" / "antigravity-cli" / "brain",
-        Path.home() / ".gemini" / "antigravity" / "brain",
-    ]
+    Covers alternate home overrides such as ~/.gemini-work/antigravity/brain.
+
+    Returns:
+        Discovered Antigravity sessions sorted by last update time, newest first.
+    """
+
+    roots: list[Path] = []
+    for relative in ("antigravity-cli/brain", "antigravity/brain"):
+        roots.extend(_find_profile_targets(".gemini*", relative))
 
     sessions: list[SessionRecord] = []
     seen_ids = set()
 
     for root in roots:
-        if not root.exists():
-            continue
-
         app_dir = root.parent
 
-        for session_dir in root.iterdir():
+        for session_dir in sorted(root.iterdir()):
             if not session_dir.is_dir() or session_dir.name.startswith("."):
                 continue
             if session_dir.name in seen_ids:
@@ -239,7 +341,17 @@ def _discover_antigravity_sessions() -> list[SessionRecord]:
 
 
 def _read_antigravity_summary_db(app_dir: Path, conversation_id: str) -> dict[str, Any]:
-    """Reads conversation summary metadata from Antigravity SQLite database."""
+    """Reads conversation summary metadata from Antigravity SQLite database.
+
+    Args:
+        app_dir: Antigravity application directory containing
+            conversation_summaries.db (the parent of the brain root).
+        conversation_id: Conversation identifier to look up.
+
+    Returns:
+        A dictionary that may contain keys like "title", "cwd", and
+        "updated_at". Empty when the database or row is missing.
+    """
 
     db_path = app_dir / "conversation_summaries.db"
     if not db_path.is_file():
@@ -288,7 +400,15 @@ def _read_antigravity_summary_db(app_dir: Path, conversation_id: str) -> dict[st
 
 
 def _read_antigravity_metadata(session_dir: Path) -> dict[str, Any]:
-    """Extracts metadata from an Antigravity conversation directory."""
+    """Extracts metadata from an Antigravity conversation directory.
+
+    Args:
+        session_dir: Path to the conversation directory under a brain root.
+
+    Returns:
+        A dictionary that may contain keys like "cwd", "prompt", and
+        "updated_at". Empty when no transcript log file is found.
+    """
 
     result: dict[str, Any] = {}
 
@@ -361,7 +481,10 @@ def _read_claude_metadata(jsonl_path: Path) -> dict[str, str]:
         jsonl_path: Path to the Claude session jsonl file.
 
     Returns:
-        A dictionary that may contain keys like "cwd" and "prompt".
+        A dictionary that may contain keys like "cwd", "prompt", and "title".
+        "title" comes from Claude Code's own "ai-title" events, which is the
+        actual session name shown in its own UI; later occurrences overwrite
+        earlier ones since the title can be regenerated as the session grows.
     """
 
     result: dict[str, str] = {}
@@ -389,14 +512,23 @@ def _read_claude_metadata(jsonl_path: Path) -> dict[str, str]:
                     if isinstance(content, str) and content and "prompt" not in result:
                         result["prompt"] = " ".join(content.split())
 
-            if "cwd" in result and "prompt" in result:
-                break
+            if payload.get("type") == "ai-title":
+                ai_title = payload.get("aiTitle")
+                if isinstance(ai_title, str) and ai_title.strip():
+                    result["title"] = " ".join(ai_title.split())
 
     return result
 
 
 def _decode_claude_project_path(encoded: str) -> str:
-    """Decodes Claude's dash-encoded project directory name to a path string."""
+    """Decodes Claude's dash-encoded project directory name to a path string.
+
+    Args:
+        encoded: Dash-encoded directory name, e.g. "-Users-me-Repo".
+
+    Returns:
+        The decoded filesystem path, or "Unknown project" when empty.
+    """
 
     if not encoded:
         return "Unknown project"
@@ -433,8 +565,59 @@ def _read_simple_yaml(path: Path) -> dict[str, str]:
     return values
 
 
+def _read_copilot_first_prompt(session_dir: Path) -> str | None:
+    """Reads the first user message from a Copilot session's events log.
+
+    Used as a title fallback when a session has no "name" set in its
+    workspace.yaml (either not yet auto-titled, or never renamed).
+
+    Args:
+        session_dir: Path to the Copilot session-state session directory.
+
+    Returns:
+        The first user message text, or None if unavailable.
+    """
+
+    events_path = session_dir / "events.jsonl"
+    if not events_path.is_file():
+        return None
+
+    try:
+        with events_path.open("r", encoding="utf-8") as f:
+            for idx, line in enumerate(f):
+                if idx > 250:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if payload.get("type") != "user.message":
+                    continue
+
+                data = payload.get("data")
+                if isinstance(data, dict):
+                    content = data.get("content")
+                    if isinstance(content, str) and content.strip():
+                        return " ".join(content.split())
+    except OSError:
+        return None
+
+    return None
+
+
 def _directory_size_bytes(path: Path) -> int:
-    """Computes total size in bytes for all files under a directory."""
+    """Computes total size in bytes for all files under a directory.
+
+    Args:
+        path: Directory to scan recursively.
+
+    Returns:
+        Sum of file sizes, in bytes, of every file found under `path`.
+    """
 
     total = 0
     for entry in path.rglob("*"):
@@ -444,7 +627,15 @@ def _directory_size_bytes(path: Path) -> int:
 
 
 def _parse_iso_dt(value: str | None) -> datetime | None:
-    """Parses ISO datetime text and ensures timezone-aware UTC values."""
+    """Parses ISO datetime text and ensures timezone-aware UTC values.
+
+    Args:
+        value: ISO-8601 datetime string, or None. A trailing "Z" is treated
+            as UTC.
+
+    Returns:
+        A timezone-aware datetime, or None when `value` is empty or invalid.
+    """
 
     if not value:
         return None
@@ -461,7 +652,17 @@ def _parse_iso_dt(value: str | None) -> datetime | None:
 
 
 def _shorten(text: str, limit: int) -> str:
-    """Shortens text with ellipsis when it exceeds the provided limit."""
+    """Shortens text with ellipsis when it exceeds the provided limit.
+
+    Args:
+        text: Text to shorten. Internal whitespace runs are collapsed.
+        limit: Maximum length of the returned string, including the
+            ellipsis when truncation occurs.
+
+    Returns:
+        The cleaned text unchanged if it fits within `limit`, otherwise a
+        truncated copy ending in "...".
+    """
 
     cleaned = " ".join(text.split())
     if len(cleaned) <= limit:
