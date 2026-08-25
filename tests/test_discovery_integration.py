@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -78,3 +79,89 @@ def test_discover_copilot_sessions_reads_workspace_and_falls_back_to_mtime(
     assert sessions[1].session_id == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     assert sessions[1].title == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     assert sessions[1].project_path == "Unknown project"
+
+
+def test_discover_antigravity_sessions_reads_transcript_and_sorts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: home))
+
+    brain_cli = home / ".gemini" / "antigravity-cli" / "brain"
+    brain_ide = home / ".gemini" / "antigravity" / "brain"
+    s1 = brain_cli / "conv-1"
+    s2 = brain_ide / "conv-2"
+    s3 = brain_cli / "conv-3"
+
+    logs_1 = s1 / ".system_generated" / "logs"
+    logs_1.mkdir(parents=True)
+    logs_2 = s2 / ".system_generated" / "logs"
+    logs_2.mkdir(parents=True)
+    s3.mkdir(parents=True)
+
+    (logs_1 / "transcript.jsonl").write_text(
+        '{"type":"USER_INPUT","content":"<USER_REQUEST>\\nAdd Antigravity feature\\n</USER_REQUEST>","cwd":"/path/to/project-1"}\n',
+        encoding="utf-8",
+    )
+    (logs_2 / "transcript.jsonl").write_text(
+        '{"type":"USER_INPUT","content":"Simple prompt"}\n',
+        encoding="utf-8",
+    )
+
+    _set_mtime(
+        logs_1 / "transcript.jsonl", datetime(2026, 7, 4, 15, 0, tzinfo=timezone.utc)
+    )
+    _set_mtime(
+        logs_2 / "transcript.jsonl", datetime(2026, 7, 4, 14, 0, tzinfo=timezone.utc)
+    )
+    _set_mtime(s3, datetime(2026, 7, 4, 13, 0, tzinfo=timezone.utc))
+
+    sessions = discovery.discover_sessions("antigravity")
+
+    assert len(sessions) == 3
+    assert sessions[0].session_id == "conv-1"
+    assert sessions[0].title == "Add Antigravity feature"
+    assert sessions[0].project_path == "/path/to/project-1"
+
+    assert sessions[1].session_id == "conv-2"
+    assert sessions[1].title == "Simple prompt"
+    assert sessions[1].project_path == "Unknown project"
+
+    assert sessions[2].session_id == "conv-3"
+    assert sessions[2].title == "conv-3"
+    assert sessions[2].project_path == "Unknown project"
+
+
+def test_discover_antigravity_sessions_reads_summary_db(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: home))
+
+    app_dir = home / ".gemini" / "antigravity-cli"
+    brain = app_dir / "brain"
+    s1 = brain / "c-1"
+    s1.mkdir(parents=True)
+
+    project_dir = tmp_path / "workspace" / "sede"
+    project_uri = f"file://{project_dir.as_posix()}"
+
+    db_path = app_dir / "conversation_summaries.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE conversation_summaries "
+        "(conversation_id TEXT PRIMARY KEY, title TEXT, preview TEXT, workspace_uris TEXT, last_modified_time TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES "
+        f"('c-1', 'Generic Title', 'Fixing Secondary Screen Header', '[\"{project_uri}\"]', '2026-08-25T16:00:00Z')"
+    )
+    conn.commit()
+    conn.close()
+
+    sessions = discovery.discover_sessions("antigravity")
+
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "c-1"
+    assert sessions[0].title == "Fixing Secondary Screen Header"
+    assert sessions[0].project_path == project_dir.as_posix()
