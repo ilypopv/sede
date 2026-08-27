@@ -393,6 +393,72 @@ def test_read_claude_metadata_keeps_latest_ai_title(tmp_path: Path) -> None:
     assert metadata["title"] == "Updated Title"
 
 
+def test_read_claude_metadata_prefers_custom_title_over_ai_title(
+    tmp_path: Path,
+) -> None:
+    jsonl_path = tmp_path / "s.jsonl"
+    jsonl_path.write_text(
+        '{"type":"custom-title","customTitle":"my-custom-name"}\n'
+        '{"type":"ai-title","aiTitle":"auto-generated-name"}\n',
+        encoding="utf-8",
+    )
+
+    metadata = discovery._read_claude_metadata(jsonl_path)
+
+    assert metadata["title"] == "my-custom-name"
+
+
+def test_read_claude_metadata_falls_back_to_ai_title_without_custom_title(
+    tmp_path: Path,
+) -> None:
+    jsonl_path = tmp_path / "s.jsonl"
+    jsonl_path.write_text(
+        '{"type":"ai-title","aiTitle":"auto-generated-name"}\n',
+        encoding="utf-8",
+    )
+
+    metadata = discovery._read_claude_metadata(jsonl_path)
+
+    assert metadata["title"] == "auto-generated-name"
+
+
+def test_read_claude_metadata_skips_blank_and_malformed_lines(tmp_path: Path) -> None:
+    jsonl_path = tmp_path / "s.jsonl"
+    jsonl_path.write_text(
+        "\n"
+        "not json\n"
+        '{"type":"user","message":"not-a-dict"}\n'
+        '{"type":"user","message":{"content":""}}\n'
+        '{"type":"user","cwd":"/tmp/proj","message":{"content":"real prompt"}}\n',
+        encoding="utf-8",
+    )
+
+    metadata = discovery._read_claude_metadata(jsonl_path)
+
+    assert metadata["cwd"] == "/tmp/proj"
+    assert metadata["prompt"] == "real prompt"
+    assert "title" not in metadata
+
+
+def test_read_claude_metadata_picks_up_rename_past_first_250_lines(
+    tmp_path: Path,
+) -> None:
+    jsonl_path = tmp_path / "s.jsonl"
+    lines = [
+        '{"type":"user","cwd":"/tmp/proj","message":{"content":"raw first prompt"}}\n',
+        '{"type":"ai-title","aiTitle":"Original Title"}\n',
+    ]
+    lines.extend('{"type":"mode","mode":"normal"}\n' for _ in range(300))
+    lines.append('{"type":"ai-title","aiTitle":"Renamed Title"}\n')
+    jsonl_path.write_text("".join(lines), encoding="utf-8")
+
+    metadata = discovery._read_claude_metadata(jsonl_path)
+
+    assert metadata["title"] == "Renamed Title"
+    assert metadata["prompt"] == "raw first prompt"
+    assert metadata["cwd"] == "/tmp/proj"
+
+
 def test_read_copilot_first_prompt_returns_first_user_message(tmp_path: Path) -> None:
     session_dir = tmp_path / "session"
     session_dir.mkdir()
