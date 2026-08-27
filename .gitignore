@@ -237,3 +237,6 @@ fabric.properties
 
 # MacBook files
 .DS_Store
+
+# Agents markdowns
+CLAUDE.md

@@ -482,40 +482,68 @@ def _read_claude_metadata(jsonl_path: Path) -> dict[str, str]:
 
     Returns:
         A dictionary that may contain keys like "cwd", "prompt", and "title".
-        "title" comes from Claude Code's own "ai-title" events, which is the
-        actual session name shown in its own UI; later occurrences overwrite
-        earlier ones since the title can be regenerated as the session grows.
+        "title" prefers a user-set "custom-title" event (written by Claude
+        Code's `/rename` command) over an auto-generated "ai-title" event,
+        since Claude Code keeps re-emitting a fresh "ai-title" on later turns
+        even after the session has been manually renamed, but its own UI
+        still shows the custom title. Both event kinds keep their latest
+        occurrence. Unlike "cwd"/"prompt", this title scan is not capped to
+        the first 250 lines, since a rename can be appended well past that
+        point in a long-running session; a cheap substring check keeps this
+        from re-parsing every line of large files as JSON.
     """
 
     result: dict[str, str] = {}
+    ai_title: str | None = None
+    custom_title: str | None = None
 
     with jsonl_path.open("r", encoding="utf-8") as f:
         for idx, line in enumerate(f):
-            if idx > 250:
-                break
             line = line.strip()
             if not line:
                 continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
 
-            cwd = payload.get("cwd")
-            if isinstance(cwd, str) and "cwd" not in result:
-                result["cwd"] = cwd
+            if idx <= 250 and ("cwd" not in result or "prompt" not in result):
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    payload = None
 
-            if payload.get("type") == "user":
-                message = payload.get("message", {})
-                if isinstance(message, dict):
-                    content = message.get("content")
-                    if isinstance(content, str) and content and "prompt" not in result:
-                        result["prompt"] = " ".join(content.split())
+                if payload is not None:
+                    cwd = payload.get("cwd")
+                    if isinstance(cwd, str) and "cwd" not in result:
+                        result["cwd"] = cwd
 
-            if payload.get("type") == "ai-title":
-                ai_title = payload.get("aiTitle")
-                if isinstance(ai_title, str) and ai_title.strip():
-                    result["title"] = " ".join(ai_title.split())
+                    if payload.get("type") == "user":
+                        message = payload.get("message", {})
+                        if isinstance(message, dict):
+                            content = message.get("content")
+                            if (
+                                isinstance(content, str)
+                                and content
+                                and "prompt" not in result
+                            ):
+                                result["prompt"] = " ".join(content.split())
+
+            if "ai-title" in line or "custom-title" in line:
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = payload.get("type")
+                if event_type == "ai-title":
+                    candidate = payload.get("aiTitle")
+                    if isinstance(candidate, str) and candidate.strip():
+                        ai_title = " ".join(candidate.split())
+                elif event_type == "custom-title":
+                    candidate = payload.get("customTitle")
+                    if isinstance(candidate, str) and candidate.strip():
+                        custom_title = " ".join(candidate.split())
+
+    title = custom_title or ai_title
+    if title:
+        result["title"] = title
 
     return result
 
