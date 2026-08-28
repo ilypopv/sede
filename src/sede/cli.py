@@ -49,8 +49,8 @@ _TUI_STYLE = Style.from_dict(
     {
         "question": "bold",
         "pointer": "fg:ansicyan bold",
-        "selected": "fg:ansigreen bold",
-        "highlighted": "bold",
+        "selected": "noinherit",
+        "highlighted": "noinherit",
         "separator": "fg:ansigray",
         "instruction": "fg:ansigray",
         "text": "",
