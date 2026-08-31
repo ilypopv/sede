@@ -16,6 +16,7 @@ _Delete archived coding assistant sessions from terminal, fast and safely._
 - Multi-select deletion with confirmation
 - Storage-aware list: title, project path, storage path, size, updated-at
 - Safe Claude cleanup: removes selected session file and prunes empty project directory
+- Non-interactive `clean` command for scripted, bulk deletion with a `--dry-run` preview
 
 ## Installation
 
@@ -37,6 +38,35 @@ After installation, run:
 
 ```bash
 sede
+```
+
+## Bulk Cleanup
+
+Delete every discovered session, across all providers, without the interactive TUI:
+
+```bash
+sede clean
+```
+
+Preview what would be deleted first, without touching anything:
+
+```bash
+sede clean --dry-run
+```
+
+Limit cleanup to one provider (`--claude`, `--copilot`, `--antigravity`/`--agy`):
+
+```bash
+sede clean --copilot --dry-run
+sede clean --claude --yes
+```
+
+Skip the confirmation prompt with `--yes`/`-y`. If some session files require elevated
+permissions to remove, re-run with `sudo`:
+
+```bash
+sudo sede clean --dry-run
+sudo sede clean --yes
 ```
 
 ## TUI Preview

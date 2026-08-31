@@ -495,3 +495,143 @@ def test_session_storage_hint_returns_full_path_when_outside_home() -> None:
     )
     hint = cli._session_storage_hint(record)
     assert hint == str(storage)
+
+
+# ---------------------------------------------------------------------------
+# `sede clean`
+# ---------------------------------------------------------------------------
+
+
+class _ConfirmResult:
+    def __init__(self, value: bool) -> None:
+        self._value = value
+
+    def ask(self) -> bool:
+        return self._value
+
+
+def test_clean_reports_no_sessions_found(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "discover_sessions", lambda provider: [])
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["clean", "--yes"])
+
+    assert result.exit_code == 0
+    assert "No sessions found" in result.output
+
+
+def test_clean_dry_run_lists_sessions_without_deleting(monkeypatch) -> None:
+    session = _sample_session("claude")
+    monkeypatch.setattr(
+        cli, "discover_sessions", lambda provider: [session] if provider == "claude" else []
+    )
+    deleted = []
+    monkeypatch.setattr(cli, "delete_session", lambda s: deleted.append(s.session_id))
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["clean", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Dry run" in result.output
+    assert "Sample Session" in result.output
+    assert deleted == []
+
+
+def test_clean_filters_by_provider_flag(monkeypatch) -> None:
+    queried = []
+
+    def fake_discover(provider: str) -> list[SessionRecord]:
+        queried.append(provider)
+        return []
+
+    monkeypatch.setattr(cli, "discover_sessions", fake_discover)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["clean", "--claude", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert queried == ["claude"]
+
+
+def test_clean_antigravity_alias_agy(monkeypatch) -> None:
+    queried = []
+
+    def fake_discover(provider: str) -> list[SessionRecord]:
+        queried.append(provider)
+        return []
+
+    monkeypatch.setattr(cli, "discover_sessions", fake_discover)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["clean", "--agy", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert queried == ["antigravity"]
+
+
+def test_clean_without_provider_flags_covers_all_providers(monkeypatch) -> None:
+    queried = []
+
+    def fake_discover(provider: str) -> list[SessionRecord]:
+        queried.append(provider)
+        return []
+
+    monkeypatch.setattr(cli, "discover_sessions", fake_discover)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["clean", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert set(queried) == {"claude", "copilot", "antigravity"}
+
+
+def test_clean_prompts_and_cancels_when_declined(monkeypatch) -> None:
+    session = _sample_session("claude")
+    monkeypatch.setattr(
+        cli, "discover_sessions", lambda provider: [session] if provider == "claude" else []
+    )
+    deleted = []
+    monkeypatch.setattr(cli, "delete_session", lambda s: deleted.append(s.session_id))
+    monkeypatch.setattr(cli.questionary, "confirm", lambda *a, **k: _ConfirmResult(False))
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["clean"])
+
+    assert result.exit_code == 0
+    assert "cancelled" in result.output
+    assert deleted == []
+
+
+def test_clean_yes_skips_confirmation_and_deletes(monkeypatch) -> None:
+    session = _sample_session("claude")
+    monkeypatch.setattr(
+        cli, "discover_sessions", lambda provider: [session] if provider == "claude" else []
+    )
+    deleted = []
+    monkeypatch.setattr(cli, "delete_session", lambda s: deleted.append(s.session_id))
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["clean", "--yes"])
+
+    assert result.exit_code == 0
+    assert "Deleted 1 session(s)" in result.output
+    assert deleted == ["sid"]
+
+
+def test_clean_reports_deletion_failures(monkeypatch) -> None:
+    session = _sample_session("claude")
+    monkeypatch.setattr(
+        cli, "discover_sessions", lambda provider: [session] if provider == "claude" else []
+    )
+
+    def fake_delete(_session: SessionRecord) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(cli, "delete_session", fake_delete)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["clean", "--yes"])
+
+    assert result.exit_code == 0
+    assert "Failed to delete" in result.output
+    assert "permission denied" in result.output
