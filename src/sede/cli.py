@@ -76,6 +76,7 @@ _APP_BANNER = r"""
 
 _HELP_COMMANDS = [
     ("sede", "Main menu"),
+    ("sede clean", "Delete all sessions for every provider, no prompts"),
     ("sede --help", "Show help"),
     ("sede --version", "Show version"),
 ]
@@ -83,6 +84,14 @@ _HELP_COMMANDS = [
 _HELP_OPTIONS = [
     ("--assistant, -a TEXT", "Assistant to manage: claude, copilot, or antigravity"),
     ("--yes, -y", "Skip confirmation prompt before deletion"),
+]
+
+_HELP_CLEAN_OPTIONS = [
+    ("--dry-run", "Show what would be deleted without deleting anything"),
+    ("--yes, -y", "Skip confirmation prompt before deletion"),
+    ("--claude", "Only clean Claude Code sessions"),
+    ("--copilot", "Only clean GitHub Copilot sessions"),
+    ("--antigravity, --agy", "Only clean Antigravity sessions"),
 ]
 
 _HELP_COL_WIDTH = 28
@@ -100,6 +109,10 @@ def _print_help_screen() -> None:
     console.print()
     console.print("[bold]OPTIONS[/bold]")
     for opt, desc in _HELP_OPTIONS:
+        console.print(f"  [cyan]{opt:<{_HELP_COL_WIDTH}}[/cyan]{desc}")
+    console.print()
+    console.print("[bold]CLEAN OPTIONS[/bold]")
+    for opt, desc in _HELP_CLEAN_OPTIONS:
         console.print(f"  [cyan]{opt:<{_HELP_COL_WIDTH}}[/cyan]{desc}")
 
 
@@ -165,8 +178,9 @@ def _create_inquirer_layout_with_footer(
     return layout
 
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     assistant: str | None = typer.Option(
         None,
         "--assistant",
@@ -196,6 +210,8 @@ def main(
     """Application entrypoint.
 
     Args:
+        ctx: Typer context, used to detect whether a subcommand (e.g.
+            `clean`) is being dispatched instead of the default TUI flow.
         help: Whether to show the help screen and exit.
         version: Whether to show the version and exit.
         assistant: Optional fixed assistant provider from CLI flags.
@@ -209,6 +225,9 @@ def main(
     if show_version:
         console.print(f"sede v{__version__}")
         raise typer.Exit()
+
+    if ctx.invoked_subcommand is not None:
+        return
 
     if assistant:
         provider = _pick_provider(assistant)
@@ -225,6 +244,132 @@ def main(
         should_back = _run_provider_flow(provider, yes)
         if not should_back:
             return
+
+
+@app.command()
+def clean(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be deleted without deleting anything",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt before deletion",
+    ),
+    claude: bool = typer.Option(
+        False, "--claude", help="Only clean Claude Code sessions"
+    ),
+    copilot: bool = typer.Option(
+        False, "--copilot", help="Only clean GitHub Copilot sessions"
+    ),
+    antigravity: bool = typer.Option(
+        False, "--antigravity", "--agy", help="Only clean Antigravity sessions"
+    ),
+) -> None:
+    """Deletes every discovered session for the selected provider(s).
+
+    With no provider flag, cleans every supported provider. Combine with
+    --dry-run to preview what would be deleted, or --yes to skip the
+    confirmation prompt.
+    """
+
+    selected_providers = [
+        provider
+        for provider, flag in (
+            ("claude", claude),
+            ("copilot", copilot),
+            ("antigravity", antigravity),
+        )
+        if flag
+    ] or list(_PROVIDER_LABELS)
+
+    sessions_by_provider = {
+        provider: discover_sessions(provider) for provider in selected_providers
+    }
+    all_sessions = [
+        session
+        for sessions in sessions_by_provider.values()
+        for session in sessions
+    ]
+
+    if not all_sessions:
+        console.print("[yellow]No sessions found.[/yellow]")
+        return
+
+    total_size = sum(session.size_bytes for session in all_sessions)
+    provider_names = ", ".join(_PROVIDER_LABELS[p] for p in selected_providers)
+    console.print(
+        f"[bold]{len(all_sessions)} session(s) found across {provider_names}. "
+        f"Total size: {_human_size(total_size)}.[/bold]"
+    )
+    console.print()
+    _print_clean_sessions(sessions_by_provider)
+
+    if dry_run:
+        console.print()
+        console.print(
+            f"[cyan]Dry run: {len(all_sessions)} session(s) would be deleted. "
+            "No files were changed.[/cyan]"
+        )
+        return
+
+    if not yes:
+        console.print()
+        confirmed = questionary.confirm(
+            f"Delete {len(all_sessions)} session(s)? This operation cannot be undone.",
+            default=False,
+        ).ask()
+        if not confirmed:
+            console.print("[yellow]Cleanup cancelled.[/yellow]")
+            return
+
+    deleted = 0
+    failed: list[str] = []
+    for session in all_sessions:
+        try:
+            delete_session(session)
+            deleted += 1
+        except Exception as exc:  # noqa: BLE001
+            failed.append(f"{session.session_id}: {exc}")
+
+    console.print()
+    if deleted:
+        console.print(f"[green]Deleted {deleted} session(s).[/green]")
+    if failed:
+        console.print("[red]Failed to delete:[/red]")
+        for row in failed:
+            console.print(f"  - {row}")
+
+
+def _print_clean_sessions(
+    sessions_by_provider: dict[str, list[SessionRecord]],
+) -> None:
+    """Prints a per-provider listing of sessions targeted by `clean`.
+
+    Args:
+        sessions_by_provider: Discovered sessions keyed by provider, for the
+            providers selected on the `clean` command line.
+    """
+
+    for provider, sessions in sessions_by_provider.items():
+        if not sessions:
+            continue
+        total_size = sum(session.size_bytes for session in sessions)
+        console.print(
+            f"[bold]{_PROVIDER_LABELS[provider]}[/bold]: "
+            f"{len(sessions)} session(s), {_human_size(total_size)}"
+        )
+        for session in sessions:
+            console.print(
+                f"  - {session.title}\n"
+                f"    {session.project_path}\n"
+                f"    {_human_size(session.size_bytes)} | "
+                f"{session.updated_at.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+            )
+        console.print()
 
 
 def _pick_provider(cli_provider: str | None) -> str | None:
