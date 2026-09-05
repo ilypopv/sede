@@ -12,7 +12,7 @@ _Delete archived coding assistant sessions from terminal, fast and safely._
 ## Features
 
 - Interactive TUI flow for provider selection and session deletion
-- Supports `Claude Code`, `GitHub Copilot`, and `Antigravity`
+- Supports `Claude Code`, `GitHub Copilot`, `Antigravity`, and `OpenCode`
 - Multi-select deletion with confirmation
 - Storage-aware list: title, project path, storage path, size, updated-at
 - Safe Claude cleanup: removes selected session file and prunes empty project directory
@@ -54,7 +54,7 @@ Preview what would be deleted first, without touching anything:
 sede clean --dry-run
 ```
 
-Limit cleanup to one provider (`--claude`, `--copilot`, `--antigravity`/`--agy`):
+Limit cleanup to one provider (`--claude`, `--copilot`, `--antigravity`/`--agy`, `--opencode`):
 
 ```bash
 sede clean --copilot --dry-run
@@ -94,6 +94,9 @@ Deep clean archived coding assistant sessions from your device.
    3. Antigravity
    Delete archived Antigravity sessions
 
+   4. OpenCode
+   Delete archived OpenCode sessions
+
 ↑↓ Navigate  |  Enter / → Select  |  Ctrl+C / Q Quit
 ```
 
@@ -129,6 +132,7 @@ When no sessions are found for a provider, the same screen layout is shown inste
 - Claude: deletes selected `.jsonl` session file, then removes parent project dir only if empty.
 - Copilot: deletes the selected session directory recursively.
 - Antigravity: deletes the selected conversation directory recursively.
+- OpenCode: deletes selected session rows (`part`/`message`/`session` with `PRAGMA foreign_keys=ON`) from the shared `opencode.db`; DB file and other sessions are untouched.
 - Always review selected entries before confirming.
 
 ## Session Sources
@@ -136,3 +140,4 @@ When no sessions are found for a provider, the same screen layout is shown inste
 - Claude: `~/.claude/projects/*/*.jsonl`
 - Copilot: `~/.copilot/session-state/<session-id>/`
 - Antigravity: `~/.gemini/antigravity-cli/brain/<session-id>/` and `~/.gemini/antigravity/brain/<session-id>/`
+- OpenCode: `~/.local/share/opencode/opencode.db` (fallback `~/Library/Application Support/opencode/opencode.db`, `XDG_DATA_HOME` honoured; same XDG path for brew/non-brew) — only chat sessions are surfaced, caches (`~/.cache/opencode`, `~/.local/state/opencode`, snapshot/log) are excluded
