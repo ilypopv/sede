@@ -7,7 +7,7 @@
 
 ## Setup & Run
 - Install dev: `pip install -e .[dev]` (CI does this — `.github/workflows/ci.yml:33`) or `uv pip install -e .[dev]` / `uv sync --extra dev`.
-- Run CLI: `sede` (TUI), `sede --help` / `sede --version` (custom help at `src/sede/cli.py:107`), `sede --assistant {claude|copilot|antigravity|agy}`, `sede clean [--dry-run] [--yes] [--claude] [--copilot] [--antigravity|--agy]`.
+- Run CLI: `sede` (TUI), `sede --help` / `sede --version` (custom help at `src/sede/cli.py:107`), `sede --assistant {claude|copilot|antigravity|opencode|agy}`, `sede clean [--dry-run] [--yes] [--claude] [--copilot] [--antigravity|--agy] [--opencode]`.
 - Verify docstrings: `uv run pydocstyle src --convention google` and `uv run ruff check --select D src` — both must pass with 0 errors.
 
 ## Test & CI
@@ -21,6 +21,7 @@
   - Claude: `~/.claude/projects/*/*.jsonl` — delete removes file + prunes empty parent dir (`discovery.py:145`).
   - Copilot: `~/.copilot/session-state/<id>/` — recursive `shutil.rmtree`.
   - Antigravity: `~/.gemini/antigravity(-cli)/brain/<id>/` + `conversations/<id>.db*` + row in `conversation_summaries.db` (`discovery.py:163`).
+  - OpenCode: SQLite `~/.local/share/opencode/opencode.db` (`session` + `message`/`part` with `PRAGMA foreign_keys=ON` and explicit `DELETE FROM part/message` — shared DB file is never removed, other sessions untouched `discovery.py:553`). Fallback `~/Library/Application Support/opencode/opencode.db` and `XDG_DATA_HOME` honoured; same XDG path for brew and non-brew installs (`opencode db path` confirms). Caches (`~/.cache/opencode`, `~/.local/state/opencode`, snapshot/log) are intentionally NOT surfaced — `discover_sessions("opencode")` (`discovery.py:416`) returns only chat sessions.
 - Profile/home-override scan: `_find_profile_targets()` (`discovery.py:22`) globs `~/.claude*`, `~/.copilot*`, `~/.gemini*` at `$HOME` and recurses `_PROFILE_SCAN_DEPTH=3` into non-dot subdirs to find `projects`/`session-state`/`antigravity*/brain`. Deduplicates via `resolve()`. Mock `Path.home()` in tests (see `tests/test_discovery_integration.py`).
 - Deletion is permanent; `clean --dry-run` is the safe preview.
 
