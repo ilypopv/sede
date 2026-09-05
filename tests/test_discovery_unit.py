@@ -500,3 +500,238 @@ def test_delete_session_rejects_unknown_provider(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Unsupported provider"):
         discovery.delete_session(record)
+
+
+def _create_opencode_db(db_path: Path, sessions: list[tuple[str, str, str, int]]) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = __import__("sqlite3").connect(str(db_path))
+    conn.execute("CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT)")
+    conn.execute(
+        "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER)"
+    )
+    conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)")
+    conn.execute(
+        "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)"
+    )
+    for sid, proj, title, ms in sessions:
+        conn.execute("INSERT INTO project VALUES (?, ?)", (proj, f"/tmp/{proj}"))
+        conn.execute(
+            "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?)",
+            (sid, proj, f"/tmp/{proj}", title, ms - 1000, ms),
+        )
+        conn.execute("INSERT INTO message VALUES (?, ?, ?)", (f"msg-{sid}", sid, "msgdata"))
+        conn.execute(
+            "INSERT INTO part VALUES (?, ?, ?, ?)",
+            (f"prt-{sid}", f"msg-{sid}", sid, "partdata"),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_opencode_db_paths_respects_home(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    paths = discovery._opencode_db_paths()
+    assert tmp_path / ".local" / "share" / "opencode" / "opencode.db" in paths
+
+
+def test_opencode_cache_paths_respects_home(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    paths = discovery._opencode_cache_paths()
+    ids = {cid for cid, _, _ in paths}
+    assert "cache:cache" in ids
+    assert "cache:snapshot" in ids
+
+
+def test_delete_opencode_session_removes_db_row(tmp_path: Path) -> None:
+    import sqlite3
+
+    db_path = tmp_path / "opencode.db"
+    _create_opencode_db(
+        db_path,
+        [("ses_a", "proj_a", "Title A", 1788590000000)],
+    )
+
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM session")
+    assert cur.fetchone()[0] == 1
+    conn.close()
+
+    record = SessionRecord(
+        provider="opencode",
+        session_id="ses_a",
+        title="Title A",
+        project_path="/tmp/proj_a",
+        size_bytes=10,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=db_path,
+    )
+    discovery.delete_session(record)
+
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM session")
+    assert cur.fetchone()[0] == 0
+    conn.close()
+
+
+def test_delete_opencode_session_calls_deleter(tmp_path: Path) -> None:
+    db_path = tmp_path / "opencode.db"
+    _create_opencode_db(db_path, [("ses_b", "proj_b", "Title B", 1788590000000)])
+    record = SessionRecord(
+        provider="opencode",
+        session_id="ses_b",
+        title="Title B",
+        project_path="/tmp/proj_b",
+        size_bytes=10,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=db_path,
+    )
+    discovery.delete_session(record)
+    import sqlite3
+
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM session WHERE id='ses_b'")
+    assert cur.fetchone() is None
+    conn.close()
+
+
+def test_delete_opencode_cache_removes_directory(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache_opencode"
+    cache_dir.mkdir()
+    (cache_dir / "file.txt").write_text("hello", encoding="utf-8")
+    record = SessionRecord(
+        provider="opencode",
+        session_id="cache:cache",
+        title="OpenCode Cache",
+        project_path=str(cache_dir),
+        size_bytes=5,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=cache_dir,
+    )
+    discovery.delete_session(record)
+    assert not cache_dir.exists()
+
+
+def test_delete_opencode_cache_removes_file(tmp_path: Path) -> None:
+    cache_file = tmp_path / "cache_file"
+    cache_file.write_text("hello", encoding="utf-8")
+    record = SessionRecord(
+        provider="opencode",
+        session_id="cache:log",
+        title="OpenCode Logs",
+        project_path=str(cache_file),
+        size_bytes=5,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=cache_file,
+    )
+    discovery.delete_session(record)
+    assert not cache_file.exists()
+
+
+def test_discover_opencode_sessions_handles_missing_db(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    assert discovery._discover_opencode_sessions() == []
+
+
+def test_discover_opencode_sessions_handles_corrupt_db(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    db_path = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    db_path.parent.mkdir(parents=True)
+    db_path.write_text("not a db", encoding="utf-8")
+    # Should not raise, just return caches (none) or empty
+    result = discovery._discover_opencode_sessions()
+    assert isinstance(result, list)
+
+
+def test_opencode_db_paths_with_xdg_data_home(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    xdg_path = tmp_path / "xdg_data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(xdg_path))
+    paths = discovery._opencode_db_paths()
+    assert xdg_path / "opencode" / "opencode.db" in paths
+
+
+def test_opencode_cache_paths_with_xdg_overrides(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xcache"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xstate"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdata"))
+    paths = {cid: p for cid, p, _ in discovery._opencode_cache_paths()}
+    assert paths["cache:cache"] == tmp_path / "xcache" / "opencode"
+    assert paths["cache:state"] == tmp_path / "xstate" / "opencode"
+    assert paths["cache:snapshot"] == tmp_path / "xdata" / "opencode" / "snapshot"
+
+
+def test_discover_opencode_sessions_handles_empty_title_and_missing_project(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    db_path = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    db_path.parent.mkdir(parents=True)
+    import sqlite3
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT)")
+    conn.execute(
+        "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER)"
+    )
+    conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)")
+    conn.execute(
+        "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)"
+    )
+    # session with empty title and no directory, project worktree missing
+    conn.execute(
+        "INSERT INTO session VALUES ('ses_empty', 'proj_missing', '', '', 1788590000000, 1788590000000)"
+    )
+    # No project row, no message/part
+    conn.commit()
+    conn.close()
+    sessions = discovery._discover_opencode_sessions()
+    db_sess = [s for s in sessions if s.session_id == "ses_empty"]
+    assert len(db_sess) == 1
+    assert db_sess[0].title == "ses_empty"
+    assert db_sess[0].project_path == "Unknown project"
+
+
+def test_discover_opencode_cache_skips_empty_dir(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    empty_cache = tmp_path / ".cache" / "opencode"
+    empty_cache.mkdir(parents=True)
+    # caches are intentionally excluded from session discovery
+    sessions = discovery._discover_opencode_sessions()
+    cache_ids = {s.session_id for s in sessions if s.session_id.startswith("cache:")}
+    assert "cache:cache" not in cache_ids
+    (empty_cache / "file.txt").write_text("hello", encoding="utf-8")
+    sessions2 = discovery._discover_opencode_sessions()
+    cache_ids2 = {s.session_id for s in sessions2 if s.session_id.startswith("cache:")}
+    assert "cache:cache" not in cache_ids2
+
+
+def test_discover_opencode_cache_file_handling(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    # caches are excluded even when file exists
+    cache_file = tmp_path / ".cache" / "opencode"
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache_file.write_text("filecache", encoding="utf-8")
+    sessions = discovery._discover_opencode_sessions()
+    cache_ids = {s.session_id for s in sessions if s.session_id.startswith("cache:")}
+    assert "cache:cache" not in cache_ids
+
+
+def test_delete_opencode_session_missing_db_raises(tmp_path: Path) -> None:
+    import pytest
+
+    missing_db = tmp_path / "missing.db"
+    record = SessionRecord(
+        provider="opencode",
+        session_id="ses_missing",
+        title="t",
+        project_path="/tmp",
+        size_bytes=1,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=missing_db,
+    )
+    with pytest.raises(FileNotFoundError):
+        discovery.delete_session(record)

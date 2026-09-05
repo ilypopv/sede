@@ -1,13 +1,14 @@
 """Session discovery and deletion for supported assistant providers.
 
 Handles scanning of provider-specific storage locations (Claude, Copilot,
-Antigravity) including profile and home-override layouts, metadata
+Antigravity, OpenCode) including profile and home-override layouts, metadata
 extraction, and safe deletion of session data.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 from datetime import datetime, timezone
@@ -103,7 +104,8 @@ def discover_sessions(provider: str) -> list[SessionRecord]:
     """Discovers stored sessions for the requested assistant provider.
 
     Args:
-        provider: Assistant provider key, e.g. "claude" or "copilot".
+        provider: Assistant provider key, e.g. "claude", "copilot", or
+            "opencode".
 
     Returns:
         A list of discovered sessions sorted by last update time, newest first.
@@ -117,6 +119,8 @@ def discover_sessions(provider: str) -> list[SessionRecord]:
         return _discover_copilot_sessions()
     if provider == "antigravity":
         return _discover_antigravity_sessions()
+    if provider == "opencode":
+        return _discover_opencode_sessions()
     raise ValueError(f"Unsupported provider: {provider}")
 
 
@@ -138,6 +142,9 @@ def delete_session(session: SessionRecord) -> None:
         return
     if session.provider == "antigravity":
         _delete_antigravity_session(session.storage_path, session.session_id)
+        return
+    if session.provider == "opencode":
+        _delete_opencode_session(session.storage_path, session.session_id)
         return
     raise ValueError(f"Unsupported provider: {session.provider}")
 
@@ -350,6 +357,193 @@ def _discover_antigravity_sessions() -> list[SessionRecord]:
             seen_ids.add(session_dir.name)
 
     return sorted(sessions, key=lambda s: s.updated_at, reverse=True)
+
+
+def _opencode_db_paths() -> list[Path]:
+    """Returns candidate paths for the OpenCode SQLite database.
+
+    Checks the XDG data locations used by OpenCode on Linux/macOS. Each
+    path is derived from the current ``$HOME`` so tests can mock
+    ``Path.home()``. An explicit ``XDG_DATA_HOME`` override is also honoured
+    when present.
+
+    Returns:
+        Candidate database paths in priority order.
+    """
+    home = Path.home()
+    candidates: list[Path] = [
+        home / ".local" / "share" / "opencode" / "opencode.db",
+        home / "Library" / "Application Support" / "opencode" / "opencode.db",
+    ]
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    if xdg_data:
+        try:
+            candidates.append(Path(xdg_data) / "opencode" / "opencode.db")
+        except Exception:
+            pass
+    # De-duplicate while preserving order.
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for cand in candidates:
+        if cand not in seen:
+            seen.add(cand)
+            unique.append(cand)
+    return unique
+
+
+def _opencode_cache_paths() -> list[tuple[str, Path, str]]:
+    """Returns OpenCode cache locations to be treated as deletable items.
+
+    Returns:
+        A list of tuples ``(cache_id, path, title)`` for each cache
+        location. ``cache_id`` is used as the ``session_id`` prefix
+        ``cache:`` so that deletion can be distinguished from DB sessions.
+    """
+    home = Path.home()
+    xdg_cache = os.environ.get("XDG_CACHE_HOME")
+    xdg_state = os.environ.get("XDG_STATE_HOME")
+    cache_home = Path(xdg_cache) if xdg_cache else home / ".cache"
+    state_home = Path(xdg_state) if xdg_state else home / ".local" / "state"
+    data_home = Path(os.environ.get("XDG_DATA_HOME", str(home / ".local" / "share")))
+    return [
+        ("cache:cache", cache_home / "opencode", "OpenCode Cache"),
+        ("cache:state", state_home / "opencode", "OpenCode State"),
+        ("cache:snapshot", data_home / "opencode" / "snapshot", "OpenCode Snapshots"),
+        ("cache:log", data_home / "opencode" / "log", "OpenCode Logs"),
+    ]
+
+
+def _discover_opencode_sessions() -> list[SessionRecord]:
+    """Discovers OpenCode sessions from the SQLite database.
+
+    Sessions are read from ``~/.local/share/opencode/opencode.db`` (and
+    fallbacks). Only chat sessions are surfaced — local caches such as
+    ``~/.cache/opencode`` or ``~/.local/share/opencode/snapshot`` are
+    intentionally excluded.
+
+    Returns:
+        Discovered OpenCode sessions sorted by last update time, newest
+        first.
+    """
+    sessions: list[SessionRecord] = []
+    seen_ids: set[str] = set()
+
+    for db_path in _opencode_db_paths():
+        if not db_path.is_file():
+            continue
+        try:
+            uri = f"file:{db_path}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True)
+            cursor = conn.cursor()
+            # Verify required tables exist.
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='session'")
+            if cursor.fetchone() is None:
+                conn.close()
+                continue
+
+            # Left join project to resolve worktree when session.directory is empty.
+            cursor.execute(
+                "SELECT s.id, s.project_id, s.directory, s.title, "
+                "s.time_created, s.time_updated, p.worktree "
+                "FROM session s LEFT JOIN project p ON s.project_id = p.id"
+            )
+            rows = cursor.fetchall()
+
+            # Pre-compute sizes per session when possible (message + part payloads).
+            for row in rows:
+                sid, pid, directory, title, t_created, t_updated, worktree = row
+                if sid in seen_ids:
+                    continue
+                seen_ids.add(sid)
+                project_path = directory or worktree or "Unknown project"
+                title_val = title or sid
+                # time columns are milliseconds since epoch
+                try:
+                    ms = int(t_updated if t_updated is not None else t_created)
+                    updated_at = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+                except Exception:
+                    try:
+                        stat = db_path.stat()
+                        updated_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+                    except OSError:
+                        updated_at = datetime.now(timezone.utc)
+
+                # Estimate size via sum of message/part data lengths.
+                size_bytes = 0
+                try:
+                    cursor.execute(
+                        "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM message WHERE session_id = ?",
+                        (sid,),
+                    )
+                    msg_size = cursor.fetchone()[0] or 0
+                    cursor.execute(
+                        "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM part WHERE session_id = ?",
+                        (sid,),
+                    )
+                    part_size = cursor.fetchone()[0] or 0
+                    size_bytes = int(msg_size) + int(part_size)
+                    # Fallback to DB file size if both are zero but session exists.
+                    if size_bytes == 0:
+                        try:
+                            size_bytes = db_path.stat().st_size // max(1, len(rows))
+                        except OSError:
+                            size_bytes = 0
+                except sqlite3.Error:
+                    size_bytes = 0
+
+                sessions.append(
+                    SessionRecord(
+                        provider="opencode",
+                        session_id=sid,
+                        title=_shorten(title_val, 70),
+                        project_path=project_path,
+                        size_bytes=size_bytes,
+                        updated_at=updated_at,
+                        storage_path=db_path,
+                    )
+                )
+            conn.close()
+        except sqlite3.Error:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            continue
+
+    return sorted(sessions, key=lambda s: s.updated_at, reverse=True)
+
+
+def _delete_opencode_session(session_path: Path, session_id: str) -> None:
+    """Deletes an OpenCode session.
+
+    Args:
+        session_path: Path to the OpenCode database (``opencode.db``). For
+            legacy cache entries this may be a cache directory.
+        session_id: Session identifier. Cache entries prefixed with
+            ``cache:`` are removed via filesystem deletion; all other values
+            are treated as DB session ids and removed safely via
+            ``DELETE`` with explicit cleanup of ``message``/``part`` rows
+            so that a shared ``opencode.db`` file is never removed and
+            other sessions remain untouched.
+    """
+    if session_id.startswith("cache:"):
+        if session_path.is_dir():
+            shutil.rmtree(session_path)
+        elif session_path.is_file():
+            session_path.unlink()
+        return
+    if not session_path.is_file():
+        raise FileNotFoundError(f"OpenCode database not found: {session_path}")
+    conn = sqlite3.connect(str(session_path))
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM part WHERE session_id = ?", (session_id,))
+        cursor.execute("DELETE FROM message WHERE session_id = ?", (session_id,))
+        cursor.execute("DELETE FROM session WHERE id = ?", (session_id,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _read_antigravity_summary_db(app_dir: Path, conversation_id: str) -> dict[str, Any]:

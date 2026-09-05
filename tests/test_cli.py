@@ -20,6 +20,8 @@ def _sample_session(provider: str = "claude") -> SessionRecord:
         storage = Path.home() / ".claude" / "projects" / "p" / "sid.jsonl"
     elif provider == "copilot":
         storage = Path.home() / ".copilot" / "session-state" / "sid"
+    elif provider == "opencode":
+        storage = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
     else:
         storage = Path.home() / ".gemini" / "antigravity-cli" / "brain" / "sid"
 
@@ -167,6 +169,8 @@ def test_pick_provider_accepts_cli_values() -> None:
     assert cli._pick_provider("  copilot ") == "copilot"
     assert cli._pick_provider("antigravity") == "antigravity"
     assert cli._pick_provider("  agy ") == "antigravity"
+    assert cli._pick_provider("opencode") == "opencode"
+    assert cli._pick_provider("  OPENCODE ") == "opencode"
 
 
 def test_pick_provider_rejects_unknown_cli_value() -> None:
@@ -569,6 +573,22 @@ def test_clean_antigravity_alias_agy(monkeypatch) -> None:
     assert queried == ["antigravity"]
 
 
+def test_clean_opencode_flag(monkeypatch) -> None:
+    queried = []
+
+    def fake_discover(provider: str) -> list[SessionRecord]:
+        queried.append(provider)
+        return []
+
+    monkeypatch.setattr(cli, "discover_sessions", fake_discover)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["clean", "--opencode", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert queried == ["opencode"]
+
+
 def test_clean_without_provider_flags_covers_all_providers(monkeypatch) -> None:
     queried = []
 
@@ -582,7 +602,7 @@ def test_clean_without_provider_flags_covers_all_providers(monkeypatch) -> None:
     result = runner.invoke(cli.app, ["clean", "--dry-run"])
 
     assert result.exit_code == 0
-    assert set(queried) == {"claude", "copilot", "antigravity"}
+    assert set(queried) == {"claude", "copilot", "antigravity", "opencode"}
 
 
 def test_clean_prompts_and_cancels_when_declined(monkeypatch) -> None:

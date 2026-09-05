@@ -258,3 +258,66 @@ def test_discover_antigravity_sessions_reads_summary_db(
     assert sessions[0].session_id == "c-1"
     assert sessions[0].title == "Fixing Secondary Screen Header"
     assert sessions[0].project_path == project_dir.as_posix()
+
+
+def test_discover_opencode_sessions_reads_db_and_sorts(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: home))
+
+    db_path = home / ".local" / "share" / "opencode" / "opencode.db"
+    db_path.parent.mkdir(parents=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT)")
+    conn.execute(
+        "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER)"
+    )
+    conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)")
+    conn.execute(
+        "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)"
+    )
+    # Two sessions with different updated times
+    t1 = int(datetime(2026, 7, 4, 10, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    t2 = int(datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    conn.execute("INSERT INTO project VALUES ('proj1', '/tmp/proj1')")
+    conn.execute("INSERT INTO project VALUES ('proj2', '/tmp/proj2')")
+    conn.execute(
+        "INSERT INTO session VALUES ('ses_aaa', 'proj1', '/tmp/proj1', 'Older Session', ?, ?)",
+        (t1 - 1000, t1),
+    )
+    conn.execute(
+        "INSERT INTO session VALUES ('ses_bbb', 'proj2', '/tmp/proj2', 'Newer Session', ?, ?)",
+        (t2 - 1000, t2),
+    )
+    conn.execute("INSERT INTO message VALUES ('msg1', 'ses_aaa', 'hello')")
+    conn.execute("INSERT INTO part VALUES ('prt1', 'msg1', 'ses_aaa', 'world')")
+    conn.commit()
+    conn.close()
+
+    sessions = discovery.discover_sessions("opencode")
+    # Filter only DB sessions (exclude caches)
+    db_sessions = [s for s in sessions if not s.session_id.startswith("cache:")]
+    assert len(db_sessions) == 2
+    assert db_sessions[0].session_id == "ses_bbb"
+    assert db_sessions[0].title == "Newer Session"
+    assert db_sessions[0].project_path == "/tmp/proj2"
+    assert db_sessions[1].session_id == "ses_aaa"
+
+
+def test_discover_opencode_sessions_excludes_caches(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: home))
+
+    cache_dir = home / ".cache" / "opencode"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "models.json").write_text("x" * 100, encoding="utf-8")
+
+    snapshot_dir = home / ".local" / "share" / "opencode" / "snapshot"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "dummy").write_text("y", encoding="utf-8")
+
+    sessions = discovery.discover_sessions("opencode")
+    cache_ids = {s.session_id for s in sessions if s.session_id.startswith("cache:")}
+    assert "cache:cache" not in cache_ids
+    assert "cache:snapshot" not in cache_ids
+    # helpers still expose cache locations for tooling, but discovery excludes them
+    assert any(cid == "cache:cache" for cid, _, _ in discovery._opencode_cache_paths())

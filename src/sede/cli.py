@@ -50,6 +50,7 @@ _PROVIDER_LABELS = {
     "claude": "Claude Code",
     "copilot": "GitHub Copilot",
     "antigravity": "Antigravity",
+    "opencode": "OpenCode",
 }
 
 _TUI_STYLE = Style.from_dict(
@@ -89,7 +90,7 @@ _HELP_COMMANDS = [
 ]
 
 _HELP_OPTIONS = [
-    ("--assistant, -a TEXT", "Assistant to manage: claude, copilot, or antigravity"),
+    ("--assistant, -a TEXT", "Assistant to manage: claude, copilot, antigravity, or opencode"),
     ("--yes, -y", "Skip confirmation prompt before deletion"),
 ]
 
@@ -99,6 +100,7 @@ _HELP_CLEAN_OPTIONS = [
     ("--claude", "Only clean Claude Code sessions"),
     ("--copilot", "Only clean GitHub Copilot sessions"),
     ("--antigravity, --agy", "Only clean Antigravity sessions"),
+    ("--opencode", "Only clean OpenCode sessions"),
 ]
 
 _HELP_COL_WIDTH = 28
@@ -191,7 +193,7 @@ def main(
         None,
         "--assistant",
         "-a",
-        help="Assistant to manage: claude, copilot, or antigravity",
+        help="Assistant to manage: claude, copilot, antigravity, or opencode",
     ),
     yes: bool = typer.Option(
         False,
@@ -273,6 +275,9 @@ def clean(
     antigravity: bool = typer.Option(
         False, "--antigravity", "--agy", help="Only clean Antigravity sessions"
     ),
+    opencode: bool = typer.Option(
+        False, "--opencode", help="Only clean OpenCode sessions"
+    ),
 ) -> None:
     """Deletes every discovered session for the selected provider(s).
 
@@ -286,6 +291,7 @@ def clean(
         claude: Whether to limit cleanup to Claude Code sessions.
         copilot: Whether to limit cleanup to GitHub Copilot sessions.
         antigravity: Whether to limit cleanup to Antigravity sessions.
+        opencode: Whether to limit cleanup to OpenCode sessions.
     """
     selected_providers = [
         provider
@@ -293,6 +299,7 @@ def clean(
             ("claude", claude),
             ("copilot", copilot),
             ("antigravity", antigravity),
+            ("opencode", opencode),
         )
         if flag
     ] or list(_PROVIDER_LABELS)
@@ -400,7 +407,7 @@ def _pick_provider(cli_provider: str | None) -> str | None:
         if normalized in _PROVIDER_LABELS:
             return normalized
         console.print(
-            "[red]Unknown assistant. Use claude, copilot, or antigravity.[/red]"
+            "[red]Unknown assistant. Use claude, copilot, antigravity, or opencode.[/red]"
         )
         return None
 
@@ -817,8 +824,12 @@ def _provider_menu_with_quit() -> str | None:  # pragma: no cover
             value="copilot",
         ),
         Choice(
-            "3. Antigravity\n   Delete archived Antigravity sessions",
+            "3. Antigravity\n   Delete archived Antigravity sessions\n",
             value="antigravity",
+        ),
+        Choice(
+            "4. OpenCode\n   Delete archived OpenCode sessions",
+            value="opencode",
         ),
     ]
 
