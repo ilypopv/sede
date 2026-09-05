@@ -1,3 +1,10 @@
+"""Command-line interface for sede.
+
+Provides the Typer application, interactive TUI flows (provider selection
+and session picking), and the non-interactive ``clean`` command for bulk
+deletion of archived assistant sessions.
+"""
+
 from __future__ import annotations
 
 import shutil
@@ -145,7 +152,6 @@ def _create_inquirer_layout_with_footer(
     Returns:
         The questionary layout with the footer row appended.
     """
-
     layout = questionary_common.create_inquirer_layout(control, get_prompt_tokens)
     if not isinstance(layout.container, HSplit):
         return layout
@@ -211,13 +217,12 @@ def main(
 
     Args:
         ctx: Typer context, used to detect whether a subcommand (e.g.
-            `clean`) is being dispatched instead of the default TUI flow.
-        help: Whether to show the help screen and exit.
-        version: Whether to show the version and exit.
+            ``clean``) is being dispatched instead of the default TUI flow.
         assistant: Optional fixed assistant provider from CLI flags.
         yes: Whether to skip the deletion confirmation prompt.
+        show_help: Whether to show the help screen and exit.
+        show_version: Whether to show the version and exit.
     """
-
     if show_help:
         _print_help_screen()
         raise typer.Exit()
@@ -272,10 +277,16 @@ def clean(
     """Deletes every discovered session for the selected provider(s).
 
     With no provider flag, cleans every supported provider. Combine with
-    --dry-run to preview what would be deleted, or --yes to skip the
+    ``--dry-run`` to preview what would be deleted, or ``--yes`` to skip the
     confirmation prompt.
-    """
 
+    Args:
+        dry_run: Whether to preview deletions without modifying the filesystem.
+        yes: Whether to skip the confirmation prompt before deletion.
+        claude: Whether to limit cleanup to Claude Code sessions.
+        copilot: Whether to limit cleanup to GitHub Copilot sessions.
+        antigravity: Whether to limit cleanup to Antigravity sessions.
+    """
     selected_providers = [
         provider
         for provider, flag in (
@@ -353,7 +364,6 @@ def _print_clean_sessions(
         sessions_by_provider: Discovered sessions keyed by provider, for the
             providers selected on the `clean` command line.
     """
-
     for provider, sessions in sessions_by_provider.items():
         if not sessions:
             continue
@@ -383,7 +393,6 @@ def _pick_provider(cli_provider: str | None) -> str | None:
         The resolved provider key, or None when the value is invalid or the
         user quits the interactive menu.
     """
-
     if cli_provider:
         normalized = cli_provider.strip().lower()
         if normalized == "agy":
@@ -402,7 +411,6 @@ def _pick_provider(cli_provider: str | None) -> str | None:
 
 def _print_home_screen() -> None:
     """Renders the branded home screen banner and project info."""
-
     console.print(f"[bold cyan]{_APP_BANNER}[/bold cyan]")
     console.print(f"[bold]Session Deleter v{__version__}[/bold]")
     console.print("[blue]https://github.com/ilypopv/sede/[/blue]")
@@ -422,7 +430,6 @@ def _run_provider_flow(provider: str, yes: bool) -> bool:
     Returns:
         True when caller should navigate back to provider menu, else False.
     """
-
     sessions = discover_sessions(provider)
     _print_provider_header(provider, sessions)
 
@@ -480,7 +487,6 @@ def _print_provider_header(provider: str, sessions: list[SessionRecord]) -> None
         provider: Provider key whose sessions are being displayed.
         sessions: Discovered sessions for the provider (may be empty).
     """
-
     total_size = sum(session.size_bytes for session in sessions)
     console.print(f"[bold] Available sessions: {_PROVIDER_LABELS[provider]}[/bold]")
     console.print(
@@ -500,7 +506,6 @@ def _pick_sessions(sessions: list[SessionRecord]) -> list[SessionRecord] | str:
         The selected sessions, an empty list when nothing was selected, or
         `_BACK_SENTINEL` when the user navigated back.
     """
-
     mapping: dict[str, SessionRecord] = {
         session.session_id: session for session in sessions
     }
@@ -537,7 +542,6 @@ def _print_selected_summary(sessions: list[SessionRecord]) -> None:
     Args:
         sessions: Sessions chosen by the user, about to be deleted.
     """
-
     console.print("[bold]Selected for deletion:[/bold]")
     for session in sessions:
         console.print(
@@ -560,7 +564,6 @@ def _session_choice_title(
     Returns:
         A list of (style class, text) tuples for the checkbox choice row.
     """
-
     storage_hint = _session_storage_hint(session)
     formatted_dt = session.updated_at.astimezone(timezone.utc).strftime(
         "%Y-%m-%d %H:%M UTC"
@@ -592,7 +595,6 @@ def _session_storage_hint(session: SessionRecord) -> str:
         The storage path with the home directory replaced by "~" when
         applicable, otherwise the full path unchanged.
     """
-
     path_for_display = session.storage_path
     if session.provider == "claude":
         path_for_display = session.storage_path.parent
@@ -620,7 +622,6 @@ def _wait_for_any_key(message: str) -> None:  # pragma: no cover
     Args:
         message: Prompt text shown while waiting for input.
     """
-
     control = FormattedTextControl(text=[("class:question", message)])
     layout = Layout(Window(content=control))
 
@@ -656,7 +657,6 @@ def _compute_toggled_select_all(
     Returns:
         The new list of selected values.
     """
-
     selectable_values = [
         item.value
         for item in choices
@@ -688,7 +688,6 @@ def _checkbox_with_back(
         The selected values, `_BACK_SENTINEL` when the user pressed the
         back key, or None when the user quit or interrupted the prompt.
     """
-
     if not callable(validate):
         raise TypeError("validate must be callable")
 
@@ -808,7 +807,6 @@ def _provider_menu_with_quit() -> str | None:  # pragma: no cover
     Returns:
         The selected provider key, or None when the user quit the menu.
     """
-
     choices: list[Choice] = [
         Choice(
             "1. Claude Code\n   Delete archived Claude Code sessions\n",
@@ -900,7 +898,6 @@ def _human_size(size_bytes: int) -> str:
     Returns:
         A human-readable string such as "1.5 KB".
     """
-
     value = float(size_bytes)
     units = ["B", "KB", "MB", "GB", "TB"]
     unit_index = 0
