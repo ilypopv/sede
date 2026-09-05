@@ -1,3 +1,10 @@
+"""Session discovery and deletion for supported assistant providers.
+
+Handles scanning of provider-specific storage locations (Claude, Copilot,
+Antigravity) including profile and home-override layouts, metadata
+extraction, and safe deletion of session data.
+"""
+
 from __future__ import annotations
 
 import json
@@ -13,11 +20,13 @@ _PROFILE_SCAN_DEPTH = 3
 
 
 def _find_profile_targets(marker_glob: str, relative_target: str) -> list[Path]:
-    """Finds every `relative_target` dir reachable from home through dirs
-    matching `marker_glob`, including provider "profile" setups that behave
-    like an alternate home directory (e.g. a ``HOME``-overriding launcher
-    script), such as ``~/.copilot-profiles/<name>/session-state`` or
-    ``~/.copilot-profiles/<name>/.copilot/session-state``.
+    """Finds every ``relative_target`` directory reachable from home.
+
+    Includes provider "profile" setups that behave like an alternate home
+    directory (e.g. a ``HOME``-overriding launcher script), such as
+    ``~/.copilot-profiles/<name>/session-state`` or
+    ``~/.copilot-profiles/<name>/.copilot/session-state``. Searches are
+    performed relative to ``marker_glob`` matches under ``$HOME``.
 
     Args:
         marker_glob: Glob for provider-owned dot-directories directly under
@@ -31,18 +40,28 @@ def _find_profile_targets(marker_glob: str, relative_target: str) -> list[Path]:
     Returns:
         Deduplicated list of existing target directories.
     """
-
     found: list[Path] = []
     seen_targets: set[Path] = set()
     seen_markers: set[Path] = set()
 
     def add(directory: Path) -> None:
+        """Adds ``relative_target`` under ``directory`` if it exists.
+
+        Args:
+            directory: Base directory to check for ``relative_target``.
+        """
         target = directory / relative_target
         if target.is_dir() and target not in seen_targets:
             seen_targets.add(target)
             found.append(target)
 
     def scan(base: Path, depth: int) -> None:
+        """Recursively scans for provider marker directories.
+
+        Args:
+            base: Directory to scan for ``marker_glob`` matches.
+            depth: Remaining recursion depth for profile subdirectories.
+        """
         if depth <= 0:
             return
         try:
@@ -92,7 +111,6 @@ def discover_sessions(provider: str) -> list[SessionRecord]:
     Raises:
         ValueError: If the provider is not supported.
     """
-
     if provider == "claude":
         return _discover_claude_sessions()
     if provider == "copilot":
@@ -112,7 +130,6 @@ def delete_session(session: SessionRecord) -> None:
         ValueError: If the provider is not supported.
         OSError: If filesystem deletion fails.
     """
-
     if session.provider == "claude":
         _delete_claude_session_file(session.storage_path)
         return
@@ -131,7 +148,6 @@ def _delete_claude_session_file(session_file: Path) -> None:
     Args:
         session_file: Path to the Claude session jsonl file.
     """
-
     session_file.unlink(missing_ok=False)
 
     parent_dir = session_file.parent
@@ -151,7 +167,6 @@ def _delete_antigravity_session(session_path: Path, session_id: str) -> None:
         session_path: Path to the session's directory under a brain root.
         session_id: Conversation identifier used to key the SQLite rows.
     """
-
     if session_path.is_dir():
         shutil.rmtree(session_path)
 
@@ -189,7 +204,6 @@ def _discover_claude_sessions() -> list[SessionRecord]:
     Returns:
         Discovered Claude sessions sorted by last update time, newest first.
     """
-
     sessions: list[SessionRecord] = []
     seen_paths: set[Path] = set()
 
@@ -236,7 +250,6 @@ def _discover_copilot_sessions() -> list[SessionRecord]:
     Returns:
         Discovered Copilot sessions sorted by last update time, newest first.
     """
-
     sessions: list[SessionRecord] = []
     seen_ids: set[str] = set()
 
@@ -287,7 +300,6 @@ def _discover_antigravity_sessions() -> list[SessionRecord]:
     Returns:
         Discovered Antigravity sessions sorted by last update time, newest first.
     """
-
     roots: list[Path] = []
     for relative in ("antigravity-cli/brain", "antigravity/brain"):
         roots.extend(_find_profile_targets(".gemini*", relative))
@@ -352,7 +364,6 @@ def _read_antigravity_summary_db(app_dir: Path, conversation_id: str) -> dict[st
         A dictionary that may contain keys like "title", "cwd", and
         "updated_at". Empty when the database or row is missing.
     """
-
     db_path = app_dir / "conversation_summaries.db"
     if not db_path.is_file():
         return {}
@@ -409,7 +420,6 @@ def _read_antigravity_metadata(session_dir: Path) -> dict[str, Any]:
         A dictionary that may contain keys like "cwd", "prompt", and
         "updated_at". Empty when no transcript log file is found.
     """
-
     result: dict[str, Any] = {}
 
     log_files = [
@@ -492,7 +502,6 @@ def _read_claude_metadata(jsonl_path: Path) -> dict[str, str]:
         point in a long-running session; a cheap substring check keeps this
         from re-parsing every line of large files as JSON.
     """
-
     result: dict[str, str] = {}
     ai_title: str | None = None
     custom_title: str | None = None
@@ -557,7 +566,6 @@ def _decode_claude_project_path(encoded: str) -> str:
     Returns:
         The decoded filesystem path, or "Unknown project" when empty.
     """
-
     if not encoded:
         return "Unknown project"
     if encoded.startswith("-"):
@@ -577,7 +585,6 @@ def _read_simple_yaml(path: Path) -> dict[str, str]:
     Returns:
         Parsed key/value pairs.
     """
-
     values: dict[str, str] = {}
 
     with path.open("r", encoding="utf-8") as f:
@@ -605,7 +612,6 @@ def _read_copilot_first_prompt(session_dir: Path) -> str | None:
     Returns:
         The first user message text, or None if unavailable.
     """
-
     events_path = session_dir / "events.jsonl"
     if not events_path.is_file():
         return None
@@ -646,7 +652,6 @@ def _directory_size_bytes(path: Path) -> int:
     Returns:
         Sum of file sizes, in bytes, of every file found under `path`.
     """
-
     total = 0
     for entry in path.rglob("*"):
         if entry.is_file():
@@ -664,7 +669,6 @@ def _parse_iso_dt(value: str | None) -> datetime | None:
     Returns:
         A timezone-aware datetime, or None when `value` is empty or invalid.
     """
-
     if not value:
         return None
 
@@ -691,7 +695,6 @@ def _shorten(text: str, limit: int) -> str:
         The cleaned text unchanged if it fits within `limit`, otherwise a
         truncated copy ending in "...".
     """
-
     cleaned = " ".join(text.split())
     if len(cleaned) <= limit:
         return cleaned
