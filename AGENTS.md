@@ -1,31 +1,35 @@
 # AGENTS.md
 
 ## Stack & Layout
-- Python >=3.9, `setuptools` (`src/` layout), package `sede` at `src/sede/` (`cli.py:38` entry `sede.cli:app`, also `python -m sede` via `src/sede/__main__.py:1`).
-- Core modules: `src/sede/cli.py` (Typer + questionary/prompt_toolkit TUI + `clean` subcommand), `src/sede/discovery.py` (per-provider scan/delete), `src/sede/models.py:15` (`SessionRecord` dataclass).
-- Dependencies: `typer`, `questionary`, `rich` (`pyproject.toml:13`); dev adds `pytest`, `pytest-cov`, `pydocstyle`, `ruff` (`pyproject.toml:15`).
+
+- Python >=3.9, `setuptools` `src/` layout. Package `sede` at `src/sede/`; entry `sede.cli:app` (`src/sede/cli.py:38`), also `python -m sede` (`src/sede/__main__.py:1`).
+- Core modules: `src/sede/cli.py` (Typer + questionary/prompt_toolkit TUI, `clean` subcommand), `src/sede/discovery.py` (scan/delete per provider), `src/sede/models.py:15` (`SessionRecord` — 7 attrs).
+- Deps: `typer`, `questionary`, `rich` (`pyproject.toml:13`); dev adds `pytest`, `pytest-cov`, `pydocstyle`, `ruff`.
 
 ## Setup & Run
-- Install dev: `pip install -e .[dev]` (CI does this — `.github/workflows/ci.yml:33`) or `uv pip install -e .[dev]` / `uv sync --extra dev`.
-- Run CLI: `sede` (TUI), `sede --help` / `sede --version` (custom help at `src/sede/cli.py:107`), `sede --assistant {claude|copilot|antigravity|opencode|agy}`, `sede clean [--dry-run] [--yes] [--claude] [--copilot] [--antigravity|--agy] [--opencode]`.
-- Verify docstrings: `uv run pydocstyle src --convention google` and `uv run ruff check --select D src` — both must pass with 0 errors.
+
+- Install: `pip install -e .[dev]` (CI at `.github/workflows/ci.yml:33`) or `uv sync --extra dev` / `uv pip install -e .[dev]`.
+- CLI: `sede` (TUI), `sede --help` / `sede --version` (custom help `src/sede/cli.py:109`), `sede --assistant {claude|copilot|antigravity|opencode|agy}` (`agy` → `antigravity`), `sede clean [--dry-run] [--yes] [--claude] [--copilot] [--antigravity|--agy] [--opencode]`.
+- Docstrings must pass both: `uv run pydocstyle src --convention google` and `uv run ruff check --select D src` — 0 errors.
 
 ## Test & CI
-- Tests: `pytest` (config at `pyproject.toml:37` — `testpaths = ["tests"]`, `--cov=src/sede --cov-fail-under=90 --cov-report=term-missing --cov-report=xml`, `branch=true`).
-- Coverage threshold is 90% — new code must keep coverage green.
-- Single test: `pytest tests/test_cli.py::test_clean_dry_run_lists_sessions_without_deleting` (same pattern for discovery: `pytest tests/test_discovery_unit.py -k test_decode`).
-- CI matrix: Python 3.10–3.14 on `ubuntu-latest` (`.github/workflows/ci.yml:18`), publish on `v*` tags via trusted publishing (`.github/workflows/publish.yml`).
 
-## Architecture Notes
-- Session sources (verify against `src/sede/discovery.py` / `README.md:135`):
-  - Claude: `~/.claude/projects/*/*.jsonl` — delete removes file + prunes empty parent dir (`discovery.py:145`).
-  - Copilot: `~/.copilot/session-state/<id>/` — recursive `shutil.rmtree`.
-  - Antigravity: `~/.gemini/antigravity(-cli)/brain/<id>/` + `conversations/<id>.db*` + row in `conversation_summaries.db` (`discovery.py:163`).
-  - OpenCode: SQLite `~/.local/share/opencode/opencode.db` (`session` + `message`/`part` with `PRAGMA foreign_keys=ON` and explicit `DELETE FROM part/message` — shared DB file is never removed, other sessions untouched `discovery.py:553`). Fallback `~/Library/Application Support/opencode/opencode.db` and `XDG_DATA_HOME` honoured; same XDG path for brew and non-brew installs (`opencode db path` confirms). Caches (`~/.cache/opencode`, `~/.local/state/opencode`, snapshot/log) are intentionally NOT surfaced — `discover_sessions("opencode")` (`discovery.py:416`) returns only chat sessions.
-- Profile/home-override scan: `_find_profile_targets()` (`discovery.py:22`) globs `~/.claude*`, `~/.copilot*`, `~/.gemini*` at `$HOME` and recurses `_PROFILE_SCAN_DEPTH=3` into non-dot subdirs to find `projects`/`session-state`/`antigravity*/brain`. Deduplicates via `resolve()`. Mock `Path.home()` in tests (see `tests/test_discovery_integration.py`).
+- `pytest` — config `pyproject.toml:36` (`testpaths=["tests"]`, `--cov=src/sede --cov-fail-under=90 --cov-report=term-missing --cov-report=xml`, `branch=true`). Keep coverage ≥90%.
+- Single test: `pytest tests/test_cli.py::test_clean_dry_run_lists_sessions_without_deleting` or `pytest tests/test_discovery_unit.py -k test_decode`.
+- CI: `ubuntu-latest`, Python 3.10–3.14 (`.github/workflows/ci.yml:18`); publish on `v*` tags via trusted publishing (`.github/workflows/publish.yml`).
+
+## Architecture
+
+- Session sources (`src/sede/discovery.py`):
+  - Claude `~/.claude/projects/*/*.jsonl` — delete unlinks file + prunes empty parent dir (`discovery.py:152`).
+  - Copilot `~/.copilot/session-state/<id>/` — `shutil.rmtree`.
+  - Antigravity `~/.gemini/antigravity(-cli)/brain/<id>/` + `conversations/<id>.db*` + row in `conversation_summaries.db` (`discovery.py:170`).
+  - OpenCode SQLite `~/.local/share/opencode/opencode.db` (fallback `~/Library/Application Support/opencode/opencode.db`, `XDG_DATA_HOME` honoured; same XDG path for brew/non-brew). Deletes via `PRAGMA foreign_keys=ON` + explicit `DELETE FROM part/message/session` — shared DB never removed (`discovery.py:516`). `discover_sessions("opencode")` returns only chat sessions; caches (`~/.cache/opencode`, `~/.local/state/opencode`, snapshot/log) intentionally excluded (`discovery.py:416`).
+- Profile scan: `_find_profile_targets()` (`discovery.py:23`) globs `~/.claude*`, `~/.copilot*`, `~/.gemini*` at `$HOME` and recurses `_PROFILE_SCAN_DEPTH=3` into non-dot subdirs for `projects`/`session-state`/`antigravity*/brain`. Deduplicates via `resolve()`. In tests mock `Path.home()` (see `tests/test_discovery_integration.py`).
 - Deletion is permanent; `clean --dry-run` is the safe preview.
 
 ## Conventions
-- Strict Google Style docstrings required for every `src/sede/*.py` (`pyproject.toml: [tool.pydocstyle] convention="google"`, `[tool.ruff.lint.pydocstyle] convention="google"`). Every module/class/function needs `Args`/`Returns`/`Raises`/`Attributes` as applicable; summary line must be single sentence ending with period, blank line before `Args`. No blank line after closing `"""` (D202 is enforced — `ruff check --select D` auto-fixes it). `SessionRecord` (`models.py:15`) documents all 7 attributes; `clean` (`cli.py:255`) and `main` (`cli.py:188`) Args must match signature; inner helpers `add`/`scan` (`discovery.py:47`) also have docstrings.
-- No formatter/typecheck config beyond ruff pydocstyle — match current style (4-space indent, `from __future__ import annotations`, typed signatures).
-- Keep `src/sede/cli.py` TUI helpers (`_TUI_STYLE`, `_BACK_SENTINEL`, `_checkbox_with_back`, `_provider_menu_with_quit`) intact; tests mock them rather than driving a real terminal.
+
+- Strict Google docstrings required for every `src/sede/*.py` (`[tool.pydocstyle] convention="google"`, `[tool.ruff.lint.pydocstyle] convention="google"`). Summary: single sentence ending with period, blank line before `Args`/`Returns`/`Raises`/`Attributes`, no blank line after `"""` (D202, auto-fixable). `clean`/`main` Args must match signature; inner `add`/`scan` (`discovery.py:48`) also need docstrings.
+- No formatter/typecheck config beyond ruff pydocstyle — match existing style (4-space indent, `from __future__ import annotations`, typed signatures).
+- Keep TUI helpers intact: `_TUI_STYLE`, `_BACK_SENTINEL`, `_checkbox_with_back`, `_provider_menu_with_quit` (`src/sede/cli.py:56`); tests mock them instead of driving a terminal.
