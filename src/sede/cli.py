@@ -816,24 +816,24 @@ def _provider_menu_with_quit() -> str | None:  # pragma: no cover
     """
     choices: list[Choice] = [
         Choice(
-            "1. Claude Code\n   Delete archived Claude Code sessions\n",
+            "1. Claude Code        Delete archived Claude Code sessions",
             value="claude",
         ),
         Choice(
-            "2. GitHub Copilot\n   Delete archived Copilot sessions\n",
+            "2. GitHub Copilot     Delete archived Copilot sessions",
             value="copilot",
         ),
         Choice(
-            "3. Antigravity\n   Delete archived Antigravity sessions\n",
+            "3. Antigravity        Delete archived Antigravity sessions",
             value="antigravity",
         ),
         Choice(
-            "4. OpenCode\n   Delete archived OpenCode sessions",
+            "4. OpenCode           Delete archived Opencode sessions",
             value="opencode",
         ),
     ]
 
-    control = InquirerControl(choices, pointer="➤")
+    control = InquirerControl(choices, pointer="➤", use_indicator=False)
     control.show_cursor = False
 
     def get_prompt_tokens() -> list[tuple[str, str]]:
