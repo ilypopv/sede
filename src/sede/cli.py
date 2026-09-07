@@ -90,7 +90,10 @@ _HELP_COMMANDS = [
 ]
 
 _HELP_OPTIONS = [
-    ("--assistant, -a TEXT", "Assistant to manage: claude, copilot, antigravity, or opencode"),
+    (
+        "--assistant, -a TEXT",
+        "Assistant to manage: claude, copilot, antigravity, or opencode",
+    ),
     ("--yes, -y", "Skip confirmation prompt before deletion"),
 ]
 
@@ -308,9 +311,7 @@ def clean(
         provider: discover_sessions(provider) for provider in selected_providers
     }
     all_sessions = [
-        session
-        for sessions in sessions_by_provider.values()
-        for session in sessions
+        session for sessions in sessions_by_provider.values() for session in sessions
     ]
 
     if not all_sessions:
@@ -828,7 +829,7 @@ def _provider_menu_with_quit() -> str | None:  # pragma: no cover
             value="antigravity",
         ),
         Choice(
-            "4. OpenCode           Delete archived Opencode sessions",
+            "4. OpenCode           Delete archived OpenCode sessions",
             value="opencode",
         ),
     ]

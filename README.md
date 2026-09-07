@@ -88,7 +88,7 @@ Deep clean archived coding assistant sessions from your device.
  ➤ 1. Claude Code        Delete archived Claude Code sessions
    2. GitHub Copilot     Delete archived Copilot sessions
    3. Antigravity        Delete archived Antigravity sessions
-   4. OpenCode           Delete archived Opencode sessions
+   4. OpenCode           Delete archived OpenCode sessions
 
 ↑↓ Navigate  |  Enter / → Select  |  Ctrl+C / Q Quit
 ```
