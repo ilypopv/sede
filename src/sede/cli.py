@@ -90,7 +90,10 @@ _HELP_COMMANDS = [
 ]
 
 _HELP_OPTIONS = [
-    ("--assistant, -a TEXT", "Assistant to manage: claude, copilot, antigravity, or opencode"),
+    (
+        "--assistant, -a TEXT",
+        "Assistant to manage: claude, copilot, antigravity, or opencode",
+    ),
     ("--yes, -y", "Skip confirmation prompt before deletion"),
 ]
 
@@ -308,9 +311,7 @@ def clean(
         provider: discover_sessions(provider) for provider in selected_providers
     }
     all_sessions = [
-        session
-        for sessions in sessions_by_provider.values()
-        for session in sessions
+        session for sessions in sessions_by_provider.values() for session in sessions
     ]
 
     if not all_sessions:
@@ -816,24 +817,24 @@ def _provider_menu_with_quit() -> str | None:  # pragma: no cover
     """
     choices: list[Choice] = [
         Choice(
-            "1. Claude Code\n   Delete archived Claude Code sessions\n",
+            "1. Claude Code        Delete archived Claude Code sessions",
             value="claude",
         ),
         Choice(
-            "2. GitHub Copilot\n   Delete archived Copilot sessions\n",
+            "2. GitHub Copilot     Delete archived Copilot sessions",
             value="copilot",
         ),
         Choice(
-            "3. Antigravity\n   Delete archived Antigravity sessions\n",
+            "3. Antigravity        Delete archived Antigravity sessions",
             value="antigravity",
         ),
         Choice(
-            "4. OpenCode\n   Delete archived OpenCode sessions",
+            "4. OpenCode           Delete archived OpenCode sessions",
             value="opencode",
         ),
     ]
 
-    control = InquirerControl(choices, pointer="➤")
+    control = InquirerControl(choices, pointer="➤", use_indicator=False)
     control.show_cursor = False
 
     def get_prompt_tokens() -> list[tuple[str, str]]:
