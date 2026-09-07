@@ -85,17 +85,10 @@ https://github.com/ilypopv/sede/
 Deep clean archived coding assistant sessions from your device.
 
  Choose coding assistant
- ➤ 1. Claude Code
-   Delete archived Claude Code sessions
-
-   2. GitHub Copilot
-   Delete archived Copilot sessions
-
-   3. Antigravity
-   Delete archived Antigravity sessions
-
-   4. OpenCode
-   Delete archived OpenCode sessions
+ ➤ 1. Claude Code        Delete archived Claude Code sessions
+   2. GitHub Copilot     Delete archived Copilot sessions
+   3. Antigravity        Delete archived Antigravity sessions
+   4. OpenCode           Delete archived Opencode sessions
 
 ↑↓ Navigate  |  Enter / → Select  |  Ctrl+C / Q Quit
 ```
