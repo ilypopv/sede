@@ -359,6 +359,71 @@ def _discover_antigravity_sessions() -> list[SessionRecord]:
     return sorted(sessions, key=lambda s: s.updated_at, reverse=True)
 
 
+_OPENCODE_SESSION_SCHEMAS = (
+    ("session_v2", "session_message", "session_part"),
+    ("session", "message", "part"),
+)
+
+_OPENCODE_V2_SESSION_TABLES = (
+    "blob_ref",
+    "instruction_entry",
+    "instruction_state",
+    "schedule",
+    "session_inbox",
+    "session_part",
+    "session_message",
+)
+
+
+def _opencode_table_names(cursor: sqlite3.Cursor) -> set[str]:
+    """Returns the table names present in an OpenCode SQLite database.
+
+    Args:
+        cursor: Cursor connected to the OpenCode database.
+
+    Returns:
+        The set of table names available in the database.
+    """
+    return {
+        row[0]
+        for row in cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+
+
+def _opencode_payload_size(
+    cursor: sqlite3.Cursor,
+    session_id: str,
+    message_table: str,
+    part_table: str,
+    fallback_size: int,
+) -> int:
+    """Estimates an OpenCode session size from stored payload columns.
+
+    Args:
+        cursor: Cursor connected to the OpenCode database.
+        session_id: Session identifier to measure.
+        message_table: Table holding message payloads for this schema.
+        part_table: Table holding message part payloads for this schema.
+        fallback_size: Size to use when no payload rows are found.
+
+    Returns:
+        The combined payload size in bytes, or ``fallback_size`` when both
+        payload tables contain no data for the session.
+    """
+    size_bytes = 0
+    try:
+        for table in (message_table, part_table):
+            cursor.execute(
+                f"SELECT COALESCE(SUM(LENGTH(data)), 0) FROM {table} "
+                "WHERE session_id = ?",
+                (session_id,),
+            )
+            size_bytes += int(cursor.fetchone()[0] or 0)
+    except sqlite3.Error:
+        return 0
+    return size_bytes or fallback_size
+
+
 def _opencode_db_paths() -> list[Path]:
     """Returns candidate paths for the OpenCode SQLite database.
 
@@ -416,10 +481,12 @@ def _opencode_cache_paths() -> list[tuple[str, Path, str]]:
 def _discover_opencode_sessions() -> list[SessionRecord]:
     """Discovers OpenCode sessions from the SQLite database.
 
-    Sessions are read from ``~/.local/share/opencode/opencode.db`` (and
-    fallbacks). Only chat sessions are surfaced — local caches such as
-    ``~/.cache/opencode`` or ``~/.local/share/opencode/snapshot`` are
-    intentionally excluded.
+    Reads both the legacy v1 ``session``/``message``/``part`` tables and the
+    v2 ``session_v2``/``session_message``/``session_part`` tables, so a single
+    database can surface sessions stored by either version. Sessions are read
+    from ``~/.local/share/opencode/opencode.db`` (and fallbacks). Only chat
+    sessions are surfaced — local caches such as ``~/.cache/opencode`` or
+    ``~/.local/share/opencode/snapshot`` are intentionally excluded.
 
     Returns:
         Discovered OpenCode sessions sorted by last update time, newest
@@ -435,73 +502,66 @@ def _discover_opencode_sessions() -> list[SessionRecord]:
             uri = f"file:{db_path}?mode=ro"
             conn = sqlite3.connect(uri, uri=True)
             cursor = conn.cursor()
-            # Verify required tables exist.
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='session'")
-            if cursor.fetchone() is None:
-                conn.close()
-                continue
+            tables = _opencode_table_names(cursor)
 
-            # Left join project to resolve worktree when session.directory is empty.
-            cursor.execute(
-                "SELECT s.id, s.project_id, s.directory, s.title, "
-                "s.time_created, s.time_updated, p.worktree "
-                "FROM session s LEFT JOIN project p ON s.project_id = p.id"
-            )
-            rows = cursor.fetchall()
-
-            # Pre-compute sizes per session when possible (message + part payloads).
-            for row in rows:
-                sid, pid, directory, title, t_created, t_updated, worktree = row
-                if sid in seen_ids:
+            for session_table, message_table, part_table in _OPENCODE_SESSION_SCHEMAS:
+                if session_table not in tables:
                     continue
-                seen_ids.add(sid)
-                project_path = directory or worktree or "Unknown project"
-                title_val = title or sid
-                # time columns are milliseconds since epoch
-                try:
-                    ms = int(t_updated if t_updated is not None else t_created)
-                    updated_at = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
-                except Exception:
-                    try:
-                        stat = db_path.stat()
-                        updated_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
-                    except OSError:
-                        updated_at = datetime.now(timezone.utc)
 
-                # Estimate size via sum of message/part data lengths.
-                size_bytes = 0
-                try:
-                    cursor.execute(
-                        "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM message WHERE session_id = ?",
-                        (sid,),
-                    )
-                    msg_size = cursor.fetchone()[0] or 0
-                    cursor.execute(
-                        "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM part WHERE session_id = ?",
-                        (sid,),
-                    )
-                    part_size = cursor.fetchone()[0] or 0
-                    size_bytes = int(msg_size) + int(part_size)
-                    # Fallback to DB file size if both are zero but session exists.
-                    if size_bytes == 0:
-                        try:
-                            size_bytes = db_path.stat().st_size // max(1, len(rows))
-                        except OSError:
-                            size_bytes = 0
-                except sqlite3.Error:
-                    size_bytes = 0
-
-                sessions.append(
-                    SessionRecord(
-                        provider="opencode",
-                        session_id=sid,
-                        title=_shorten(title_val, 70),
-                        project_path=project_path,
-                        size_bytes=size_bytes,
-                        updated_at=updated_at,
-                        storage_path=db_path,
-                    )
+                # Left join project to resolve worktree when directory is empty.
+                cursor.execute(
+                    "SELECT s.id, s.directory, s.title, "
+                    "s.time_created, s.time_updated, p.worktree "
+                    f"FROM {session_table} s "
+                    "LEFT JOIN project p ON s.project_id = p.id"
                 )
+                rows = cursor.fetchall()
+                # Fallback to DB file size if a session has no payload rows.
+                try:
+                    fallback_size = db_path.stat().st_size // max(1, len(rows))
+                except OSError:
+                    fallback_size = 0
+
+                for row in rows:
+                    sid, directory, title, t_created, t_updated, worktree = row
+                    if sid in seen_ids:
+                        continue
+                    seen_ids.add(sid)
+                    project_path = directory or worktree or "Unknown project"
+                    title_val = title or sid
+                    # time columns are milliseconds since epoch
+                    try:
+                        ms = int(t_updated if t_updated is not None else t_created)
+                        updated_at = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+                    except Exception:
+                        try:
+                            stat = db_path.stat()
+                            updated_at = datetime.fromtimestamp(
+                                stat.st_mtime, tz=timezone.utc
+                            )
+                        except OSError:
+                            updated_at = datetime.now(timezone.utc)
+
+                    # Estimate size via sum of message/part data lengths.
+                    size_bytes = _opencode_payload_size(
+                        cursor,
+                        sid,
+                        message_table,
+                        part_table,
+                        fallback_size,
+                    )
+
+                    sessions.append(
+                        SessionRecord(
+                            provider="opencode",
+                            session_id=sid,
+                            title=_shorten(title_val, 70),
+                            project_path=project_path,
+                            size_bytes=size_bytes,
+                            updated_at=updated_at,
+                            storage_path=db_path,
+                        )
+                    )
             conn.close()
         except sqlite3.Error:
             try:
@@ -513,6 +573,64 @@ def _discover_opencode_sessions() -> list[SessionRecord]:
     return sorted(sessions, key=lambda s: s.updated_at, reverse=True)
 
 
+def _delete_opencode_v2_session(
+    cursor: sqlite3.Cursor, session_id: str, tables: set[str]
+) -> None:
+    """Deletes an OpenCode v2 session, its child sessions, and related rows.
+
+    Mirrors OpenCode's own session deletion: child sessions are removed
+    recursively, durable events and jobs for the session are dropped, and
+    session-scoped rows are deleted explicitly before the ``session_v2`` row
+    itself. Optional tables are skipped when absent so databases from older
+    or newer schema versions keep working.
+
+    Args:
+        cursor: Cursor connected to the OpenCode database.
+        session_id: Identifier of the session to delete.
+        tables: Table names present in the database.
+    """
+    if "session_v2" not in tables:
+        return
+
+    pending = [session_id]
+    seen: set[str] = set()
+
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+
+        cursor.execute("SELECT id FROM session_v2 WHERE parent_id = ?", (current,))
+        pending.extend(row[0] for row in cursor.fetchall())
+
+        if "job" in tables:
+            cursor.execute(
+                "DELETE FROM job WHERE session_id = ? OR child_session_id = ?",
+                (current, current),
+            )
+        if "event" in tables:
+            cursor.execute("DELETE FROM event WHERE aggregate_id = ?", (current,))
+        if "event_sequence" in tables:
+            cursor.execute(
+                "DELETE FROM event_sequence WHERE aggregate_id = ?", (current,)
+            )
+        if "blob" in tables and "blob_ref" in tables:
+            cursor.execute(
+                "DELETE FROM blob WHERE hash IN ("
+                "SELECT hash FROM blob_ref WHERE session_id = ?"
+                ") AND NOT EXISTS ("
+                "SELECT 1 FROM blob_ref AS ref WHERE ref.hash = blob.hash "
+                "AND ref.session_id != ?"
+                ")",
+                (current, current),
+            )
+        for table in _OPENCODE_V2_SESSION_TABLES:
+            if table in tables:
+                cursor.execute(f"DELETE FROM {table} WHERE session_id = ?", (current,))
+        cursor.execute("DELETE FROM session_v2 WHERE id = ?", (current,))
+
+
 def _delete_opencode_session(session_path: Path, session_id: str) -> None:
     """Deletes an OpenCode session.
 
@@ -520,10 +638,11 @@ def _delete_opencode_session(session_path: Path, session_id: str) -> None:
         session_path: Path to the OpenCode database (``opencode.db``). For
             legacy cache entries this may be a cache directory.
         session_id: Session identifier. Cache entries prefixed with
-            ``cache:`` are removed via filesystem deletion; all other values
-            are treated as DB session ids and removed safely via
-            ``DELETE`` with explicit cleanup of ``message``/``part`` rows
-            so that a shared ``opencode.db`` file is never removed and
+            ``cache:`` are removed via filesystem deletion. Legacy v1
+            sessions are removed with explicit ``DELETE`` calls on
+            ``part``/``message``/``session``; v2 sessions use the
+            ``session_v2`` schema and also delete child sessions and their
+            related rows. A shared ``opencode.db`` file is never removed and
             other sessions remain untouched.
     """
     if session_id.startswith("cache:"):
@@ -538,9 +657,16 @@ def _delete_opencode_session(session_path: Path, session_id: str) -> None:
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM part WHERE session_id = ?", (session_id,))
-        cursor.execute("DELETE FROM message WHERE session_id = ?", (session_id,))
-        cursor.execute("DELETE FROM session WHERE id = ?", (session_id,))
+        tables = _opencode_table_names(cursor)
+
+        if "session" in tables:
+            cursor.execute("DELETE FROM part WHERE session_id = ?", (session_id,))
+            cursor.execute("DELETE FROM message WHERE session_id = ?", (session_id,))
+            cursor.execute("DELETE FROM session WHERE id = ?", (session_id,))
+
+        if "session_v2" in tables:
+            _delete_opencode_v2_session(cursor, session_id, tables)
+
         conn.commit()
     finally:
         conn.close()
