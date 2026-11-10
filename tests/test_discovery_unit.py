@@ -204,8 +204,12 @@ def test_delete_antigravity_session_cleans_db_and_summaries(tmp_path: Path) -> N
 
     summaries_db = app_dir / "conversation_summaries.db"
     conn = sqlite3.connect(str(summaries_db))
-    conn.execute("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT)")
-    conn.execute("INSERT INTO conversation_summaries VALUES ('session-123', 'My Session')")
+    conn.execute(
+        "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES ('session-123', 'My Session')"
+    )
     conn.commit()
     conn.close()
 
@@ -217,7 +221,9 @@ def test_delete_antigravity_session_cleans_db_and_summaries(tmp_path: Path) -> N
 
     conn = sqlite3.connect(str(summaries_db))
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM conversation_summaries WHERE conversation_id = 'session-123'")
+    cursor.execute(
+        "SELECT * FROM conversation_summaries WHERE conversation_id = 'session-123'"
+    )
     assert cursor.fetchone() is None
     conn.close()
 
@@ -329,12 +335,16 @@ def test_read_antigravity_metadata_extracts_tool_calls_cwd(tmp_path: Path) -> No
     assert metadata.get("prompt") == "Build feature"
 
 
-def test_discover_antigravity_sessions_handles_empty_root(tmp_path: Path, monkeypatch) -> None:
+def test_discover_antigravity_sessions_handles_empty_root(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
     assert discovery._discover_antigravity_sessions() == []
 
 
-def test_find_profile_targets_matches_direct_marker(tmp_path: Path, monkeypatch) -> None:
+def test_find_profile_targets_matches_direct_marker(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
     target = tmp_path / ".copilot" / "session-state"
     target.mkdir(parents=True)
@@ -344,7 +354,9 @@ def test_find_profile_targets_matches_direct_marker(tmp_path: Path, monkeypatch)
     assert found == [target]
 
 
-def test_find_profile_targets_finds_profile_subdirs(tmp_path: Path, monkeypatch) -> None:
+def test_find_profile_targets_finds_profile_subdirs(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
 
     direct = tmp_path / ".copilot-profiles" / "az" / "session-state"
@@ -502,14 +514,18 @@ def test_delete_session_rejects_unknown_provider(tmp_path: Path) -> None:
         discovery.delete_session(record)
 
 
-def _create_opencode_db(db_path: Path, sessions: list[tuple[str, str, str, int]]) -> None:
+def _create_opencode_db(
+    db_path: Path, sessions: list[tuple[str, str, str, int]]
+) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = __import__("sqlite3").connect(str(db_path))
     conn.execute("CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT)")
     conn.execute(
         "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER)"
     )
-    conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)")
+    conn.execute(
+        "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)"
+    )
     conn.execute(
         "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)"
     )
@@ -519,10 +535,50 @@ def _create_opencode_db(db_path: Path, sessions: list[tuple[str, str, str, int]]
             "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?)",
             (sid, proj, f"/tmp/{proj}", title, ms - 1000, ms),
         )
-        conn.execute("INSERT INTO message VALUES (?, ?, ?)", (f"msg-{sid}", sid, "msgdata"))
+        conn.execute(
+            "INSERT INTO message VALUES (?, ?, ?)", (f"msg-{sid}", sid, "msgdata")
+        )
         conn.execute(
             "INSERT INTO part VALUES (?, ?, ?, ?)",
             (f"prt-{sid}", f"msg-{sid}", sid, "partdata"),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _create_opencode_v2_db(
+    db_path: Path,
+    sessions: list[tuple[str, str, str, int]],
+    parents: dict[str, str] | None = None,
+) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = __import__("sqlite3").connect(str(db_path))
+    conn.execute("CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT)")
+    conn.execute(
+        "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER)"
+    )
+    conn.execute(
+        "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE session_part (message_id TEXT, session_id TEXT, ordinal INTEGER, data TEXT)"
+    )
+    parent_ids = parents or {}
+    for sid, proj, title, ms in sessions:
+        conn.execute(
+            "INSERT OR IGNORE INTO project VALUES (?, ?)", (proj, f"/tmp/{proj}")
+        )
+        conn.execute(
+            "INSERT INTO session_v2 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (sid, proj, parent_ids.get(sid), f"/tmp/{proj}", title, ms - 1000, ms),
+        )
+        conn.execute(
+            "INSERT INTO session_message VALUES (?, ?, ?)",
+            (f"msg-{sid}", sid, "msgdata"),
+        )
+        conn.execute(
+            "INSERT INTO session_part VALUES (?, ?, ?, ?)",
+            (f"msg-{sid}", sid, 0, "partdata"),
         )
     conn.commit()
     conn.close()
@@ -630,12 +686,16 @@ def test_delete_opencode_cache_removes_file(tmp_path: Path) -> None:
     assert not cache_file.exists()
 
 
-def test_discover_opencode_sessions_handles_missing_db(monkeypatch, tmp_path: Path) -> None:
+def test_discover_opencode_sessions_handles_missing_db(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
     assert discovery._discover_opencode_sessions() == []
 
 
-def test_discover_opencode_sessions_handles_corrupt_db(monkeypatch, tmp_path: Path) -> None:
+def test_discover_opencode_sessions_handles_corrupt_db(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
     db_path = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
     db_path.parent.mkdir(parents=True)
@@ -677,7 +737,9 @@ def test_discover_opencode_sessions_handles_empty_title_and_missing_project(
     conn.execute(
         "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER)"
     )
-    conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)")
+    conn.execute(
+        "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)"
+    )
     conn.execute(
         "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)"
     )
@@ -735,3 +797,281 @@ def test_delete_opencode_session_missing_db_raises(tmp_path: Path) -> None:
     )
     with pytest.raises(FileNotFoundError):
         discovery.delete_session(record)
+
+
+def test_discover_opencode_sessions_reads_v1_and_v2_tables(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import sqlite3
+
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    db_path = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    _create_opencode_v2_db(
+        db_path,
+        [("ses_v2", "proj_v2", "V2 Session", 1788600000000)],
+    )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER)"
+    )
+    conn.execute(
+        "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)"
+    )
+    conn.execute("INSERT INTO project VALUES ('proj_v1', '/tmp/proj_v1')")
+    conn.execute(
+        "INSERT INTO session VALUES ('ses_v1', 'proj_v1', '/tmp/proj_v1', 'V1 Session', ?, ?)",
+        (1788590000000, 1788590000000),
+    )
+    conn.execute("INSERT INTO message VALUES ('msg_v1', 'ses_v1', 'v1data')")
+    conn.execute("INSERT INTO part VALUES ('prt_v1', 'msg_v1', 'ses_v1', 'v1part')")
+    conn.commit()
+    conn.close()
+
+    sessions = discovery._discover_opencode_sessions()
+
+    assert [s.session_id for s in sessions] == ["ses_v2", "ses_v1"]
+    assert all(s.provider == "opencode" for s in sessions)
+    assert sessions[0].title == "V2 Session"
+    assert sessions[0].project_path == "/tmp/proj_v2"
+    assert sessions[0].size_bytes > 0
+    assert sessions[1].title == "V1 Session"
+
+
+def test_discover_opencode_sessions_v2_uses_fallbacks(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import sqlite3
+
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    db_path = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    _create_opencode_v2_db(
+        db_path,
+        [("ses_v2", "proj_v2", "V2 Session", 1788600000000)],
+    )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "INSERT INTO session_v2 VALUES ('ses_empty', 'missing', NULL, '', '', ?, ?)",
+        (1788590000000, 1788590000000),
+    )
+    conn.commit()
+    conn.close()
+
+    sessions = discovery._discover_opencode_sessions()
+    empty = next(s for s in sessions if s.session_id == "ses_empty")
+
+    assert empty.title == "ses_empty"
+    assert empty.project_path == "Unknown project"
+    assert empty.size_bytes > 0
+
+
+def test_discover_opencode_sessions_v2_handles_missing_payload_tables(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import sqlite3
+
+    monkeypatch.setattr(discovery.Path, "home", staticmethod(lambda: tmp_path))
+    db_path = tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    db_path.parent.mkdir(parents=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT)")
+    conn.execute(
+        "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO session_v2 VALUES ('ses_v2', 'proj_v2', NULL, '/tmp/proj_v2', 'V2 Session', 1788590000000, 1788590000000)"
+    )
+    conn.commit()
+    conn.close()
+
+    sessions = discovery._discover_opencode_sessions()
+
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "ses_v2"
+    assert sessions[0].size_bytes == 0
+
+
+def test_delete_opencode_v2_session_removes_children_and_related_rows(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    db_path = tmp_path / "opencode.db"
+    _create_opencode_v2_db(
+        db_path,
+        [
+            ("ses_parent", "proj", "Parent", 1788590000000),
+            ("ses_child", "proj", "Child", 1788590001000),
+            ("ses_other", "proj", "Other", 1788590002000),
+        ],
+        parents={"ses_child": "ses_parent"},
+    )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE instruction_state (session_id TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE instruction_entry (session_id TEXT, key TEXT)")
+    conn.execute("CREATE TABLE blob_ref (session_id TEXT, message_id TEXT, hash TEXT)")
+    conn.execute("CREATE TABLE schedule (id TEXT PRIMARY KEY, session_id TEXT)")
+    conn.execute("CREATE TABLE session_inbox (id TEXT PRIMARY KEY, session_id TEXT)")
+    conn.execute(
+        "CREATE TABLE job (notification_id TEXT PRIMARY KEY, session_id TEXT, child_session_id TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE event_sequence (aggregate_id TEXT PRIMARY KEY, seq INTEGER)"
+    )
+    conn.execute("CREATE TABLE event (id TEXT PRIMARY KEY, aggregate_id TEXT)")
+    for sid in ("ses_parent", "ses_child", "ses_other"):
+        conn.execute("INSERT INTO instruction_state VALUES (?)", (sid,))
+        conn.execute("INSERT INTO instruction_entry VALUES (?, 'key')", (sid,))
+        conn.execute(
+            "INSERT INTO blob_ref VALUES (?, ?, ?)", (sid, f"msg-{sid}", "hash")
+        )
+        conn.execute("INSERT INTO schedule VALUES (?, ?)", (f"sch-{sid}", sid))
+        conn.execute("INSERT INTO session_inbox VALUES (?, ?)", (f"inbox-{sid}", sid))
+        conn.execute("INSERT INTO event_sequence VALUES (?, 1)", (sid,))
+        conn.execute("INSERT INTO event VALUES (?, ?)", (f"evt-{sid}", sid))
+    conn.execute("INSERT INTO job VALUES ('n1', 'ses_parent', NULL)")
+    conn.execute("INSERT INTO job VALUES ('n2', 'ses_other', 'ses_child')")
+    conn.execute("INSERT INTO job VALUES ('n3', 'ses_other', NULL)")
+    conn.commit()
+    conn.close()
+
+    record = SessionRecord(
+        provider="opencode",
+        session_id="ses_parent",
+        title="Parent",
+        project_path="/tmp/proj",
+        size_bytes=10,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=db_path,
+    )
+    discovery.delete_session(record)
+
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+
+    checks = {
+        "session_v2": "id",
+        "session_message": "session_id",
+        "session_part": "session_id",
+        "instruction_state": "session_id",
+        "instruction_entry": "session_id",
+        "blob_ref": "session_id",
+        "schedule": "session_id",
+        "session_inbox": "session_id",
+        "event_sequence": "aggregate_id",
+        "event": "aggregate_id",
+    }
+    for table, column in checks.items():
+        assert (
+            cur.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {column} IN (?, ?)",
+                ("ses_parent", "ses_child"),
+            ).fetchone()[0]
+            == 0
+        )
+
+    assert cur.execute("SELECT COUNT(*) FROM session_v2").fetchone()[0] == 1
+    assert cur.execute("SELECT id FROM session_v2").fetchone()[0] == "ses_other"
+    assert cur.execute("SELECT COUNT(*) FROM session_message").fetchone()[0] == 1
+    assert cur.execute("SELECT COUNT(*) FROM session_part").fetchone()[0] == 1
+    assert cur.execute("SELECT COUNT(*) FROM instruction_state").fetchone()[0] == 1
+    assert cur.execute("SELECT COUNT(*) FROM blob_ref").fetchone()[0] == 1
+    assert cur.execute("SELECT COUNT(*) FROM schedule").fetchone()[0] == 1
+    assert cur.execute("SELECT COUNT(*) FROM session_inbox").fetchone()[0] == 1
+    assert cur.execute("SELECT COUNT(*) FROM event_sequence").fetchone()[0] == 1
+    assert cur.execute("SELECT COUNT(*) FROM event").fetchone()[0] == 1
+    assert cur.execute("SELECT notification_id FROM job").fetchall() == [("n3",)]
+    conn.close()
+
+
+def test_delete_opencode_v2_session_releases_unreferenced_blobs(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    db_path = tmp_path / "opencode.db"
+    _create_opencode_v2_db(
+        db_path,
+        [
+            ("ses_parent", "proj", "Parent", 1788590000000),
+            ("ses_child", "proj", "Child", 1788590001000),
+            ("ses_other", "proj", "Other", 1788590002000),
+        ],
+        parents={"ses_child": "ses_parent"},
+    )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE blob (hash TEXT PRIMARY KEY, data TEXT)")
+    conn.execute("CREATE TABLE blob_ref (session_id TEXT, message_id TEXT, hash TEXT)")
+    for hash_value in ("b_parent", "b_shared", "b_child_other", "b_other"):
+        conn.execute("INSERT INTO blob VALUES (?, 'data')", (hash_value,))
+    for sid, hash_value in (
+        ("ses_parent", "b_parent"),
+        ("ses_parent", "b_shared"),
+        ("ses_child", "b_shared"),
+        ("ses_child", "b_child_other"),
+        ("ses_other", "b_child_other"),
+        ("ses_other", "b_other"),
+    ):
+        conn.execute(
+            "INSERT INTO blob_ref VALUES (?, ?, ?)", (sid, f"msg-{sid}", hash_value)
+        )
+    conn.commit()
+    conn.close()
+
+    record = SessionRecord(
+        provider="opencode",
+        session_id="ses_parent",
+        title="Parent",
+        project_path="/tmp/proj",
+        size_bytes=10,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=db_path,
+    )
+    discovery.delete_session(record)
+
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    assert cur.execute("SELECT hash FROM blob ORDER BY hash").fetchall() == [
+        ("b_child_other",),
+        ("b_other",),
+    ]
+    assert cur.execute(
+        "SELECT DISTINCT hash FROM blob_ref ORDER BY hash"
+    ).fetchall() == [
+        ("b_child_other",),
+        ("b_other",),
+    ]
+    conn.close()
+
+
+def test_delete_opencode_v2_session_without_optional_tables(tmp_path: Path) -> None:
+    import sqlite3
+
+    db_path = tmp_path / "opencode.db"
+    _create_opencode_v2_db(
+        db_path,
+        [("ses_v2", "proj", "V2 Session", 1788590000000)],
+    )
+
+    record = SessionRecord(
+        provider="opencode",
+        session_id="ses_v2",
+        title="V2 Session",
+        project_path="/tmp/proj",
+        size_bytes=10,
+        updated_at=datetime.now(timezone.utc),
+        storage_path=db_path,
+    )
+    discovery.delete_session(record)
+
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    assert cur.execute("SELECT COUNT(*) FROM session_v2").fetchone()[0] == 0
+    assert cur.execute("SELECT COUNT(*) FROM session_message").fetchone()[0] == 0
+    conn.close()
