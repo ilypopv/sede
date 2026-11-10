@@ -125,7 +125,7 @@ When no sessions are found for a provider, the same screen layout is shown inste
 - Claude: deletes selected `.jsonl` session file, then removes parent project dir only if empty.
 - Copilot: deletes the selected session directory recursively.
 - Antigravity: deletes the selected conversation directory recursively.
-- OpenCode: deletes selected session rows (`part`/`message`/`session` with `PRAGMA foreign_keys=ON`) from the shared `opencode.db`; DB file and other sessions are untouched.
+- OpenCode: deletes selected session rows from the shared `opencode.db` (`part`/`message`/`session` for v1, `session_v2` plus related rows for v2, with `PRAGMA foreign_keys=ON`); v2 child sessions are removed too, while the DB file and other sessions are untouched.
 - Always review selected entries before confirming.
 
 ## Session Sources
@@ -133,4 +133,4 @@ When no sessions are found for a provider, the same screen layout is shown inste
 - Claude: `~/.claude/projects/*/*.jsonl`
 - Copilot: `~/.copilot/session-state/<session-id>/`
 - Antigravity: `~/.gemini/antigravity-cli/brain/<session-id>/` and `~/.gemini/antigravity/brain/<session-id>/`
-- OpenCode: `~/.local/share/opencode/opencode.db` (fallback `~/Library/Application Support/opencode/opencode.db`, `XDG_DATA_HOME` honoured; same XDG path for brew/non-brew) — only chat sessions are surfaced, caches (`~/.cache/opencode`, `~/.local/state/opencode`, snapshot/log) are excluded
+- OpenCode: `~/.local/share/opencode/opencode.db` (fallback `~/Library/Application Support/opencode/opencode.db`, `XDG_DATA_HOME` honoured; same XDG path for brew/non-brew) — reads both v1 (`session`/`message`/`part`) and v2 (`session_v2`/`session_message`/`session_part`) tables; only chat sessions are surfaced, caches (`~/.cache/opencode`, `~/.local/state/opencode`, snapshot/log) are excluded
